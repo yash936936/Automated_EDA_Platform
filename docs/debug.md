@@ -4,7 +4,27 @@
 > "no issues found" — this is the record of what was actually tested, not
 > just what was built.
 
-## Log
+## [2026-09-24] Postgres config was also hardcoded — fixed
+**Tested:** noticed the same issue as the earlier Redis fix: `services/api/src/index.ts`
+and `services/agent-worker/agent_worker/db.py` both had `127.0.0.1`/`postgres`/`postgres`/
+`eda_platform` hardcoded, ignoring `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`
+from `.env.example`. Also caught a real user-facing mismatch: their `.env`
+had `PGDATABASE=EDA`, but the migrations create a database literally named
+`eda_platform` — that would have silently pointed at a nonexistent database.
+**Fixed:** both files now build their Postgres connection from env vars,
+defaulting to the original hardcoded values when unset (zero-config sandbox
+behavior preserved). Re-ran the Phase 0.1 round trip twice with no `.env`
+present — passed both times, no regression.
+**Still open:** attempted a third test — pointing `PGDATABASE` at a
+freshly-created alternate database via `.env` to prove the env var actually
+changes which database is used (not just that it's silently accepted) — this
+was interrupted mid-run by the sandbox environment itself resetting (this has
+now happened three times this session; it's an instability in this tool's
+container, unrelated to the code). The fix follows the identical pattern
+already proven end-to-end for Redis (`REDIS_HOST`/`PORT`/`PASSWORD`), so
+confidence is high, but this specific PGDATABASE-override test should be
+re-run (ideally on the user's own machine, which has been more stable) before
+treating it as fully verified.
 
 ## [2026-09-24] Phase 0.1–0.4 — Foundation & Infra skeleton
 **Tested:**

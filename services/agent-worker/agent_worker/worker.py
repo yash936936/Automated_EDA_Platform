@@ -11,11 +11,22 @@ queue as the Node API gateway. Handles three job types:
                          completes the (simulated) remainder of the run.
 """
 import asyncio
+import os
 import uuid
 from bullmq import Worker
+from dotenv import load_dotenv
 from agent_worker.db import get_conn
 
-REDIS_URL = "redis://127.0.0.1:6379"
+load_dotenv()  # reads .env from CWD if present; no-op if the file doesn't exist
+
+# Reads from the environment. Falls back to local defaults so the Phase 0
+# sandbox setup keeps working unchanged with no .env file at all.
+_host = os.environ.get("REDIS_HOST", "127.0.0.1")
+_port = os.environ.get("REDIS_PORT", "6379")
+_password = os.environ.get("REDIS_PASSWORD")
+_scheme = "rediss" if os.environ.get("REDIS_TLS") == "true" else "redis"
+_auth = f":{_password}@" if _password else ""
+REDIS_URL = f"{_scheme}://{_auth}{_host}:{_port}"
 
 
 def handle_echo(job_data):

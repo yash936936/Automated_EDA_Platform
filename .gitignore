@@ -1,0 +1,21 @@
+# Node
+node_modules/
+dist/
+npm-debug.log*
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Env / secrets
+.env
+.env.local
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
