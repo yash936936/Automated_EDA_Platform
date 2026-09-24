@@ -1,0 +1,2 @@
+bullmq
+psycopg2-binary
