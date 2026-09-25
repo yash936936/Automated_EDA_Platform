@@ -19,7 +19,7 @@ import pytest
 API = os.environ.get("API_BASE_URL", "http://localhost:4000")
 PG = dict(
     host=os.environ.get("PGHOST", "127.0.0.1"),
-    port=os.environ.get("PGPORT", "5432"),
+    port=os.environ.get("PGPORT", "5433"),
     dbname=os.environ.get("PGDATABASE", "eda_platform"),
     user=os.environ.get("PGUSER", "postgres"),
     password=os.environ.get("PGPASSWORD", "postgres"),

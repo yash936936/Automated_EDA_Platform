@@ -1,0 +1,6 @@
+# Test-only dependencies, kept out of requirements.txt so the runtime worker
+# image doesn't carry test tooling. Install with:
+#   pip install -r requirements.txt -r requirements-dev.txt
+-r requirements.txt
+pytest
+requests
