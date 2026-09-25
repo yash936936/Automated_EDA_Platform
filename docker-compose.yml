@@ -11,5 +11,11 @@ services:
     ports: ["5433:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Auto-applies 000_extensions.sql then 001_init.sql, in filename order,
+      # on first container start with a *fresh* volume only. If pgdata
+      # already exists from a previous run, Postgres skips this folder
+      # entirely -- run the two files manually with psql in that case (see
+      # README), or `docker compose down -v` to force a clean re-init.
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
 volumes:
   pgdata:

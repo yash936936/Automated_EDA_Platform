@@ -8,7 +8,7 @@ app.use(express.json());
 
 const pool = new Pool({
   host: process.env.PGHOST || "127.0.0.1",
-  port: Number(process.env.PGPORT) || 5432,
+  port: Number(process.env.PGPORT) || 5433,
   user: process.env.PGUSER || "postgres",
   password: process.env.PGPASSWORD || "postgres",
   database: process.env.PGDATABASE || "eda_platform",
@@ -46,7 +46,9 @@ app.get("/api/runs/:runId/pending-approval", async (req, res) => {
     res.json({ ok: true, pending: rows[0] ?? null });
   } catch (err: any) {
     console.error("pending-approval query failed:", err);
-    res.status(500).json({ ok: false, error: String(err) });
+    // Keep the response shape stable even on failure so callers never hit a
+    // KeyError/undefined on `pending` -- always present, just null on error.
+    res.status(500).json({ ok: false, error: String(err), pending: null });
   }
 });
 
@@ -75,4 +77,41 @@ app.post("/api/approvals/:id/resolve", async (req, res) => {
 });
 
 const PORT = 4000;
-app.listen(PORT, () => console.log(`API gateway listening on :${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`API gateway listening on :${PORT}`);
+  // Fail loud at boot, not on the first request that happens to touch
+  // Postgres -- a bad PGPORT/PGPASSWORD should be obvious immediately.
+  try {
+    const { rows } = await pool.query("SHOW server_version");
+    const version = rows[0]?.server_version ?? "unknown";
+    console.log(`Postgres OK (${pool.options.host}:${pool.options.port}/${pool.options.database}), server_version=${version}`);
+    // docker-compose.yml runs postgres:16 -- if something else answers on
+    // this host/port (most commonly a native Postgres install also bound to
+    // the same port), the version won't match even though the connection
+    // itself succeeds. This has bitten real setups: a native PG17 with its
+    // own same-named database silently answering instead of the container.
+    if (!version.startsWith("16")) {
+      console.warn(
+        `WARNING: connected Postgres reports version ${version}, but docker-compose.yml runs postgres:16. ` +
+        `This usually means something other than the docker-compose container is listening on ` +
+        `${pool.options.host}:${pool.options.port} -- most commonly a native/local Postgres install also ` +
+        `bound to that port. Run 'docker ps' to confirm the container is up, and on Windows ` +
+        `'netstat -ano | findstr :${pool.options.port}' to see which process actually owns the port.`
+      );
+    }
+  } catch (err: any) {
+    const authHint = /password authentication failed/i.test(err.message)
+      ? `\nThis is often NOT a wrong-password problem -- it usually means ${pool.options.host}:${pool.options.port} ` +
+        `is being served by a *different* Postgres than docker-compose's (most commonly a native/local install ` +
+        `also bound to that port, possibly with its own same-named database). Run 'docker ps' to confirm the ` +
+        `container is up, and on Windows 'netstat -ano | findstr :${pool.options.port}' to see which process ` +
+        `actually owns the port before assuming the password itself is wrong.`
+      : "";
+    console.error(
+      `Postgres connection failed at startup (${pool.options.host}:${pool.options.port}/${pool.options.database}): ${err.message}\n` +
+      `If you're using docker-compose.yml as-is, Postgres is published on host port 5433 (not 5432) -- ` +
+      `make sure PGPORT=5433 is set (see .env.example) or that no other Postgres is listening on 5432.` +
+      authHint
+    );
+  }
+});

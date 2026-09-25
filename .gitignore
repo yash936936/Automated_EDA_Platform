@@ -15,6 +15,10 @@ __pycache__/
 
 # Logs
 *.log
+*.log.err
+
+# dev-up.ps1 process tracking
+.dev-pids/
 
 # OS
 .DS_Store
