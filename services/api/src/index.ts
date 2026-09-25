@@ -37,12 +37,17 @@ app.post("/api/runs/:runId/start", async (req, res) => {
 });
 
 app.get("/api/runs/:runId/pending-approval", async (req, res) => {
-  const { runId } = req.params;
-  const { rows } = await pool.query(
-    "SELECT * FROM pending_approvals WHERE cleaning_run_id = $1 AND status = 'awaiting_approval' ORDER BY created_at DESC LIMIT 1",
-    [runId]
-  );
-  res.json({ ok: true, pending: rows[0] ?? null });
+  try {
+    const { runId } = req.params;
+    const { rows } = await pool.query(
+      "SELECT * FROM pending_approvals WHERE cleaning_run_id = $1 AND status = 'awaiting_approval' ORDER BY created_at DESC LIMIT 1",
+      [runId]
+    );
+    res.json({ ok: true, pending: rows[0] ?? null });
+  } catch (err: any) {
+    console.error("pending-approval query failed:", err);
+    res.status(500).json({ ok: false, error: String(err) });
+  }
 });
 
 app.post("/api/approvals/:id/resolve", async (req, res) => {
