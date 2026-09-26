@@ -18,6 +18,15 @@ export const connection = {
 export const edaCleanQueue = new Queue("agent.eda_clean", { connection });
 export const edaCleanEvents = new QueueEvents("agent.eda_clean", { connection });
 
+// Always print exactly which Redis this process resolved at startup. If you
+// edit .env's REDIS_* values, any *already-running* API/worker process keeps
+// using whatever it loaded at its own startup -- restarting one side but not
+// the other silently puts producer and consumer on two different queues
+// (jobs enqueue fine, nothing ever consumes them). This line, and the
+// matching one the Python worker prints, are the fastest way to catch that:
+// if they don't show the same host/port, that's the whole bug.
+console.log(`API Redis target: ${connection.host}:${connection.port}${useTLS ? " (tls)" : ""}`);
+
 // BullMQ requires maxmemory-policy=noeviction and only warns (doesn't fail)
 // when it isn't set. docker-compose.yml's `redis-server --maxmemory-policy
 // noeviction` command should already guarantee this, but if that warning

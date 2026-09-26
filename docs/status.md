@@ -3,41 +3,50 @@
 > Log every session here, newest at top. This is the first thing to read
 > after `context.md` when resuming work.
 
-## [2026-09-25] Phase 0 test failures debugged and fixed (Yash's local run)
-**Current phase:** still Phase 0, now genuinely closer to closed — the two
-test failures reported (`test_0_1_round_trip` 504 timeout,
-`test_0_3_pause_and_resume` `KeyError: 'pending'`) were both config/workflow
-bugs, not logic bugs, and are now fixed and verified. Full root-cause and
-fix details in `docs/debug.md`'s 2026-09-25 entry — summary:
-- `PGPORT` defaulted to 5432 everywhere in code while `docker-compose.yml`
-  publishes Postgres on 5433; fixed defaults + `.env.example` to agree on
-  5433, and made the API check Postgres connectivity loudly at boot.
-- The Python worker simply wasn't running in the failing session — added
-  `scripts/dev-up.{ps1,sh}` so bringing up the whole stack (docker services,
-  `.env`, worker, API, in the right order) is one command instead of a
-  multi-step manual sequence that's easy to get half right.
-- Also fixed along the way: `README.md`'s `psql "$DATABASE_URL"` referenced
-  an env var that's never defined anywhere in this repo (real bug, would
-  have confused the next person too); `requirements.txt` never included
-  `pytest`/`requests`, so the documented smoke-test command couldn't have
-  run from a fresh install either (added `requirements-dev.txt`); the Redis
-  "eviction policy is volatile-lru" warning is defended against now (app
-  enforces `noeviction` on its own connection at startup) even though the
-  likely cause is an environment-level second Redis instance, not this repo.
-- **Verified for real, not just reviewed:** stood up Postgres 16 + Redis
-  natively (no Docker available in the verification environment), matched
-  the port topology to `docker-compose.yml` exactly, ran the actual worker
-  and built API from a fresh `.env`, and ran
-  `pytest tests/test_phase0_smoke.py -v` — 4 passed, 1 correctly skipped.
+## [2026-09-25] Phase 0 confirmed fully green on Yash's actual machine
+**Current phase:** Phase 0 is done against its `docs/phases.md` criteria,
+with three honest gaps still open (below) — this was a multi-round
+debugging session against Yash's real Windows setup, not just a code
+review. Full root-cause/fix/verification trail for every issue is in
+`docs/debug.md`'s five 2026-09-25 entries; summary of what was actually
+wrong, in the order hit:
+1. `PGPORT` defaulted to 5432 in code while `docker-compose.yml` publishes
+   Postgres on 5433 (real repo bug — fixed).
+2. `scripts/dev-up.ps1` used `Start-Job`, which doesn't reliably inherit
+   PATH on Windows and never verified the API actually started listening
+   (real script bug — rewritten around `Start-Process` + an explicit
+   port-liveness check, with log files instead of a job buffer).
+3. `requirements.txt` never included `pytest`/`requests`, so the documented
+   test command couldn't run from a fresh install (real repo bug — added
+   `requirements-dev.txt`).
+4. `.env`'s `PGPASSWORD` didn't match what the already-initialized Docker
+   volume was actually created with (Yash's hand-edited `.env`, not a repo
+   bug — but the API now prints resolved host/port/`server_version` at boot
+   specifically so this class of mismatch is obvious immediately).
+5. A worker process left running from before `.env` was switched to Redis
+   Cloud kept talking to the old Redis while a freshly-restarted API used
+   the new one — classic stale-process-vs-new-config, not a repo bug, but
+   both the worker and API now print their resolved Redis target at startup
+   specifically to catch this.
+6. The Docker containers (`postgres`, `redis`) had simply stopped running
+   at some point in the session — not a bug, just needed `docker compose up -d`.
+**Verified:** final run on Yash's actual machine —
+`4 passed, 1 skipped, 1 warning in 9.88s`. `test_0_4_live_gemini_call`
+still correctly skips (`GEMINI_API_KEY_EDA_CLEAN` not populated, despite
+other keys being present in `.env` — worth Yash double-checking if he
+wants that path exercised for real).
 **Open items / honest gaps carried forward (unchanged by this session):**
 - No OpenTelemetry tracing yet.
-- `GeminiProvider` still untested against the real API (no key available).
+- `GeminiProvider` still untested against the real live API.
 - No CI — the now-passing test suite still only runs when someone
   remembers to run it locally.
 - Root folder path still not set on Yash's actual disk / repo location.
 - Auth for the API gateway, and performance targets, still unspecified.
-**Next:** either close Phase 0's three remaining gaps above, or proceed to
-Phase 1 (Ingestion & Dataset Discovery) with them tracked — your call.
+**Next:** either close Phase 0's remaining gaps above, or proceed to
+Phase 1 (Ingestion & Dataset Discovery) with them tracked — your call. If
+picking Phase 1 up next session, start with `docker ps` before assuming any
+new failure is a code bug — half of this session's issues were "something
+wasn't running," not logic errors.
 
 ## [2026-09-24] Phase 0 built and manually tested
 **Current phase:** Phase 0 sub-phases 0.1–0.4 built and passing manual tests

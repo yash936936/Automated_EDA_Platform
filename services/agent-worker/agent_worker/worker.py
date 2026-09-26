@@ -119,7 +119,17 @@ async def process(job, token):
 
 async def main():
     worker = Worker("agent.eda_clean", process, {"connection": REDIS_URL})
-    print("Python agent worker listening on queue agent.eda_clean ...")
+    # Print exactly which Redis this process resolved at startup (password
+    # redacted) -- if you edit .env's REDIS_* values, any *already-running*
+    # worker process keeps using whatever it loaded at its own startup
+    # (python-dotenv only reads .env once). A stale worker on the old Redis
+    # while a freshly-restarted API points at a new one means producer and
+    # consumer sit on two different queues -- jobs enqueue fine, nothing ever
+    # consumes them, and it looks identical to "the worker isn't running" at
+    # the API/test level. Always check this line matches your current .env
+    # before assuming a hang is a code bug.
+    redacted = REDIS_URL.replace(f":{_password}@", ":***@") if _password else REDIS_URL
+    print(f"Python agent worker listening on queue agent.eda_clean (redis={redacted}) ...")
     await asyncio.Event().wait()  # run forever
 
 

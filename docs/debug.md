@@ -4,7 +4,87 @@
 > "no issues found" — this is the record of what was actually tested, not
 > just what was built.
 
-## [2026-09-25] Postgres auth failure with correct PGPORT=5433 — likely a native PG17 collision
+## [2026-09-25] Phase 0 fully green on Yash's machine — session closed out
+**Tested:** after the Postgres-password fix, the Redis-mismatch fix (stale
+worker vs. Redis Cloud), and bringing the stopped Docker containers back up
+(`docker compose up -d` -- they'd simply stopped at some point, not a config
+bug), ran the full suite one more time.
+**Result:** `4 passed, 1 skipped, 1 warning in 9.88s` -- `test_0_1_round_trip`,
+`test_0_2_schema_and_fk`, `test_0_3_pause_and_resume`, and
+`test_0_4_llm_interface_contract` all pass for real, against a real running
+stack (Postgres 16 in Docker, Redis Cloud, the actual worker and API
+processes). `test_0_4_live_gemini_call` still (correctly) skips --
+`GEMINI_API_KEY_EDA_CLEAN` specifically isn't set/populated despite other
+keys being visible in `.env`, worth Yash double-checking if he intends to
+exercise the real Gemini path.
+**Summary of everything actually wrong, across this whole debugging
+session, for future reference:** (1) `PGPORT` defaulted to 5432 in code
+while docker-compose publishes 5433 -- fixed; (2) `dev-up.ps1` used
+`Start-Job`, which doesn't reliably inherit PATH on Windows and never
+verified anything actually started -- rewritten around `Start-Process` with
+an explicit port-liveness check; (3) `requirements.txt` never included
+`pytest`/`requests` -- added `requirements-dev.txt`; (4) `.env`'s
+`PGPASSWORD` didn't match what the already-initialized Docker volume was
+actually created with -- a hand-edit mismatch, not a repo bug; (5) a stale
+worker process kept talking to the pre-switch Redis after `.env` was
+updated to Redis Cloud, while a freshly-restarted API used the new one --
+added startup logging on both sides specifically to catch this class of
+bug going forward; (6) the Docker containers had simply stopped running.
+Only (1)-(3) were real repository bugs; (4)-(6) were environment/session
+state, but (4) and (5) were made much faster to diagnose by the defensive
+logging added while fixing (1).
+**Still open (unchanged, honest gaps, not addressed this session):** no
+OpenTelemetry tracing (0.1's original passing criterion), `GeminiProvider`
+still never exercised against the real live API, no automated CI --
+`pytest` only runs when someone remembers to run it locally.
+**Next:** Phase 0 can now be considered genuinely done against its
+`docs/phases.md` criteria *except* for the three items above -- either close
+those out, or proceed to Phase 1 (Ingestion & Dataset Discovery) with them
+explicitly tracked. Recommend restarting Postgres/Redis health checks with
+`docker ps` at the start of any future session before assuming a fresh
+failure is a new bug -- three of the six issues this session were
+"something wasn't running," not code.
+
+
+**Tested:** Yash fixed `PGPASSWORD` (confirmed: `Postgres OK
+(127.0.0.1:5433/eda_platform)` with no warning). Re-ran the full suite and
+got the exact same two failures as the very first report -- `test_0_1`
+504 timeout, `test_0_3` no `pending_approvals` row -- despite Postgres now
+being fine. Both point at the queue itself: jobs enqueue but nothing
+consumes them.
+**Found:** `.env`'s Redis now points at a Redis Cloud instance
+(`redis-16314...redislabs.com`), switched from local Docker Redis at some
+point in this troubleshooting session. `services/agent-worker/agent_worker/
+worker.py` correctly reads `REDIS_HOST`/`PORT`/`PASSWORD` from `.env` via
+`python-dotenv` -- not a code bug -- but `load_dotenv()` only runs once, at
+process startup. A worker process left running from *before* the Redis
+Cloud switch keeps talking to the old (local) Redis forever, while a
+freshly-restarted API now enqueues to Redis Cloud. Producer and consumer end
+up on two different queues: jobs "enqueue" successfully from the API's
+point of view, nothing ever consumes them, and the symptom is
+indistinguishable from "the worker isn't running at all" -- this is the
+third time that exact symptom has appeared for a different underlying
+reason (previously: worker literally not started; now: worker started
+against stale config).
+**Fixed:** both `services/agent-worker/agent_worker/worker.py` and
+`services/api/src/queue.ts` now unconditionally print which Redis
+host:port they resolved at startup (password redacted), so a mismatch
+between the two is visible at a glance in their logs instead of only
+surfacing as a downstream timeout with no obvious cause.
+**Verified:** reproduced the exact failure on purpose -- started the worker
+against one local Redis (port 6379) and the API against a second, separate
+local Redis (port 6380) -- and got the identical `504`/timeout error Yash
+saw. Confirmed the new log lines immediately show the mismatch
+(`redis=...6379` vs `API Redis target: ...6380`). Then re-matched both to
+the same Redis and re-ran the full suite clean: 4 passed, 1 skipped, no
+regression.
+**Still open:** unchanged from prior entries. General note worth stating
+explicitly now that this has bitten three times in different forms: **any
+time `.env` changes, both the worker and the API process must be fully
+restarted** -- there is no live-reload of environment variables in either,
+by design of `python-dotenv`/Node's process.env model.
+
+
 **Tested:** Yash ran `node dist\index.js` directly (bypassing the scripts
 entirely, correctly isolating the API), got `API gateway listening on :4000`
 followed immediately by `password authentication failed for user "postgres"`

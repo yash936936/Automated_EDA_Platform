@@ -9,6 +9,15 @@ Phase 0 skeleton. See `/docs` (or the project's doc set) for the full plan.
 
 ## Run locally
 
+**If you edit `.env`, fully restart both the worker and the API.** Neither
+reloads environment variables while running -- an already-running process
+keeps using whatever it read at its own startup. Restarting only one side
+after a `.env` change (e.g. switching Redis providers) puts the worker and
+API on two different queues with no error, just jobs that silently never
+get consumed. Both processes print which Redis they resolved at startup
+specifically so you can catch this at a glance (see `docs/debug.md`'s
+2026-09-25 entries).
+
 **Quickest path (recommended):** the fixes below are now automated —
 ```powershell
 # Windows PowerShell

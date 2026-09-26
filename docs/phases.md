@@ -8,11 +8,16 @@
 ---
 
 ## Phase 0 — Foundation & Infra
-**Status: sub-phases 0.1–0.4 built and manually tested, 2026-09-24 — see
-`docs/debug.md` for the actual test log. Not marked fully closed: real
-OpenTelemetry tracing (0.1's original criterion) is still missing, Gemini has
-only been tested at the interface-contract level (no live key), and there is
-no automated/repeatable test suite yet — only one-off manual verification.**
+**Status: sub-phases 0.1–0.4 built and passing for real, confirmed on
+Yash's own machine 2026-09-25 (`4 passed, 1 skipped` — see `docs/debug.md`'s
+2026-09-25 entries for the full multi-round debugging trail; this was no
+longer just manual one-off verification by 0.4's original criterion, since
+`tests/test_phase0_smoke.py` now exists and is repeatable, just not yet
+wired into CI). Not marked fully closed: real OpenTelemetry tracing (0.1's
+original criterion) is still missing, `GeminiProvider` has only been tested
+at the interface-contract level (real key present but that specific agent's
+key wasn't populated, so `test_0_4_live_gemini_call` still skips), and there
+is still no CI running this suite automatically.**
 
 **Goal:** a running skeleton — repo structure, DB schema, job queue, API
 gateway shell, and the provider-agnostic LLM interface — with nothing
