@@ -6,9 +6,13 @@ strict **automation proposes, the user approves** design: nothing touches
 your data without an explicit, logged approval, and every decision is
 reversible and auditable.
 
-> **Status: pre-build.** Architecture and phased build plan are finalized
-> (see `docs/`); no code has been written yet. This README will be updated as
-> phases complete to reflect real, working capabilities — not aspirational ones.
+> **Status: Phase 0 complete (2026-09-26).** The foundation is real and
+> tested, not aspirational: repo scaffolding, Postgres schema, the BullMQ
+> job queue with pause/resume for human approval, a provider-agnostic LLM
+> interface (Gemini confirmed live), and OpenTelemetry tracing across the
+> API and worker. None of the product features below are built yet — Phase
+> 1 (ingestion) is next. See `docs/status.md` for the detailed trail and
+> `docs/phases.md` for what's next.
 
 ## What it does (once built)
 - Upload a file or search/import a dataset from Kaggle.

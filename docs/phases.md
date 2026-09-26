@@ -8,19 +8,15 @@
 ---
 
 ## Phase 0 — Foundation & Infra
-**Status: sub-phases 0.1–0.4 built and passing for real, confirmed on
-Yash's own machine 2026-09-25 (`4 passed, 1 skipped` — see `docs/debug.md`'s
-2026-09-25 entries for the full multi-round debugging trail; this was no
-longer just manual one-off verification by 0.4's original criterion, since
-`tests/test_phase0_smoke.py` now exists and is repeatable, just not yet
-wired into CI). OpenTelemetry tracing (0.1's original criterion) closed out
-2026-09-26 — see that date's `docs/debug.md` entry; verified against a real
-Jaeger instance, not just reviewed. Not marked fully closed: `GeminiProvider`
-has only been tested at the interface-contract level (real keys are now
-connected per-agent, but the specific one Phase 0's test suite exercises,
-`GEMINI_API_KEY_EDA_CLEAN`, wasn't populated as of the last run — Yash's
-next step is confirming this live), and there is still no CI running this
-suite automatically (Yash's step after that).**
+**Status: CLOSED, 2026-09-26.** Sub-phases 0.1–0.4 built and passing for
+real on Yash's own machine, all 5 tests in `tests/test_phase0_smoke.py`
+green including the live Gemini call, OpenTelemetry tracing verified against
+a real Jaeger instance (independently, twice — this session's environment
+and Yash's), and CI (`.github/workflows/ci.yml`) running the suite on every
+push/PR. See `docs/debug.md`'s five 2026-09-25/26 entries for the full
+multi-round debugging trail — this was a real, hard-won closure across
+several sessions, not a one-shot build. Every criterion in this phase's
+sub-phases below, plus the phase-level "done when" statement, is now met.
 
 **Goal:** a running skeleton — repo structure, DB schema, job queue, API
 gateway shell, and the provider-agnostic LLM interface — with nothing

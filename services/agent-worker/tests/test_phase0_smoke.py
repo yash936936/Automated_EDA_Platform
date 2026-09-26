@@ -15,6 +15,19 @@ import uuid
 import requests
 import psycopg2
 import pytest
+from dotenv import load_dotenv
+
+# Must happen before the @pytest.mark.skipif below: that decorator's
+# condition is evaluated at collection time, when pytest imports this
+# module -- before any test function body runs. Nothing else in this file
+# loads .env (gemini_provider.py/db.py/worker.py all do, but only once
+# something actually imports them, which for this file happens *inside*
+# test_0_4_llm_interface_contract's body, i.e. after collection already
+# decided whether to skip the test after it). Without this line, setting a
+# real GEMINI_API_KEY_EDA_CLEAN in .env had no effect on this test file no
+# matter what the key's value was -- the skip was evaluated against a raw,
+# unloaded environment every time.
+load_dotenv()
 
 API = os.environ.get("API_BASE_URL", "http://localhost:4000")
 PG = dict(

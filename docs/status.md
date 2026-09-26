@@ -3,6 +3,42 @@
 > Log every session here, newest at top. This is the first thing to read
 > after `context.md` when resuming work.
 
+## [2026-09-26] Phase 0 fully closed — tracing, live Gemini, and CI all done
+**Current phase:** Phase 0 is genuinely complete against every criterion in
+`docs/phases.md`, not just the ones that don't need a live key or a real CI
+run. Full trail across three `docs/debug.md` entries this date:
+1. **OpenTelemetry tracing** — the API and worker both create real spans,
+   linked across the Redis/BullMQ boundary via a W3C traceparent carried in
+   the job payload. Verified against a real Jaeger binary: one trace with
+   two correctly-linked spans for a real `ping-agent` call, confirmed
+   independently on Yash's own Windows/Docker setup too (his own Jaeger
+   query returned the same structure). Also fixed a real latent bug found
+   along the way: the worker's stdout was block-buffered whenever
+   redirected to a file, which could make `worker.log` look empty for a
+   while after real startup in any past or future debugging session.
+2. **Live Gemini** — `test_0_4_live_gemini_call` kept skipping even after
+   Yash set a real `GEMINI_API_KEY_EDA_CLEAN`, twice, with two different
+   keys. Root cause was a real bug in the test file, not the key:
+   `@pytest.mark.skipif` evaluates at collection time, before anything in
+   the file had loaded `.env`. Added `load_dotenv()` at the top of
+   `tests/test_phase0_smoke.py`. Confirmed on Yash's machine: **all 5 tests
+   pass**, live Gemini call included.
+3. **CI** — `.github/workflows/ci.yml` runs the real smoke suite against
+   real Postgres/Redis service containers on every push/PR to `main`,
+   intentionally with no Gemini key (that test correctly skips in CI — a
+   shared CI environment is the wrong place to spend real API quota on
+   every push). Dry-ran the exact workflow steps locally, in order,
+   including `npm ci` specifically to catch a lockfile drift `npm install`
+   would silently paper over: `4 passed, 1 skipped`, the skip being the
+   intended one.
+**Open, honestly:** the CI workflow has never executed on GitHub's actual
+runners yet — first real push is the first true test of that file, same
+caveat as `dev-up.ps1` before Yash's machine confirmed it. No deeper
+gaps are being tracked for Phase 0 beyond that.
+**Next:** proceed to Phase 1 (Ingestion & Dataset Discovery) — `docs/phases.md`
+has the sub-phase breakdown (1.1 file upload, 1.2 Kaggle search/import, 1.3
+PII pre-scan).
+
 ## [2026-09-26] OpenTelemetry tracing closed out (first of Phase 0's three remaining gaps)
 **Current phase:** still Phase 0, one gap down, two to go. Full details in
 `docs/debug.md`'s 2026-09-26 entry. Summary: the API gateway and the

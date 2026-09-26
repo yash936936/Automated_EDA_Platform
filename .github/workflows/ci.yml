@@ -1,0 +1,133 @@
+name: Phase 0 CI
+
+# Runs the actual Phase 0 smoke suite (tests/test_phase0_smoke.py) against
+# real Postgres/Redis service containers, a real built API, and a real
+# worker process -- the same suite that's been run by hand all through this
+# repo's early debugging sessions (see docs/debug.md), now automated so it
+# runs on every push/PR instead of only when someone remembers to run it
+# locally. This closes the third and last of Phase 0's originally-tracked
+# gaps (docs/phases.md).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  phase0-smoke:
+    runs-on: ubuntu-latest
+
+    # Mirrors docker-compose.yml's topology as closely as GitHub Actions
+    # service containers allow. Postgres is published on the same 5433 host
+    # port used everywhere else in this repo (.env.example, docker-compose.yml)
+    # specifically so nothing here has to special-case "the port is
+    # different in CI" -- the whole point of standardizing on 5433 locally
+    # was to dodge a native Postgres install colliding on 5432 (see
+    # docs/debug.md's 2026-09-25 entries); CI has no such native install, but
+    # keeping the port identical means the same PGPORT=5433 works everywhere,
+    # which is one less thing to get out of sync between environments.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eda_platform
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5433
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: eda_platform
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      REDIS_TLS: "false"
+      # Deliberately no GEMINI_API_KEY_* here. test_0_4_live_gemini_call is
+      # meant to skip in CI -- a shared CI environment is the wrong place to
+      # spend real API quota or depend on a live external service's
+      # uptime/latency on every push. See docs/debug.md's 2026-09-26 entry
+      # for the collection-time bug that used to make this test skip for the
+      # wrong reason (a bug in the test file, not a missing key); here the
+      # skip is intentional and correct. Live Gemini behavior gets exercised
+      # locally by whoever owns real keys, per that same entry.
+      LLM_PROVIDER: fake
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: services/api/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install & build API
+        working-directory: services/api
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install worker deps
+        working-directory: services/agent-worker
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Apply migrations
+        run: |
+          PGPASSWORD=postgres psql -h 127.0.0.1 -p 5433 -U postgres -d eda_platform -f db/migrations/000_extensions.sql
+          PGPASSWORD=postgres psql -h 127.0.0.1 -p 5433 -U postgres -d eda_platform -f db/migrations/001_init.sql
+
+      - name: Start worker
+        working-directory: services/agent-worker
+        run: nohup python -m agent_worker.worker > worker.log 2>&1 &
+
+      - name: Start API
+        working-directory: services/api
+        run: nohup node dist/index.js > api.log 2>&1 &
+
+      # Same lesson as scripts/dev-up.ps1/.sh (docs/debug.md, 2026-09-25):
+      # verify the API is actually listening before assuming it started --
+      # don't just sleep a fixed amount and hope.
+      - name: Wait for API to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4000/api/ping-agent -X POST -o /dev/null; then
+              echo "API is up and a job round-tripped successfully."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API never became ready. Logs:"
+          cat services/api/api.log services/agent-worker/worker.log 2>/dev/null || true
+          exit 1
+
+      - name: Run Phase 0 smoke suite
+        working-directory: services/agent-worker
+        run: python -m pytest tests/test_phase0_smoke.py -v
+
+      - name: Show service logs on failure
+        if: failure()
+        run: |
+          echo "=== worker.log ==="
+          cat services/agent-worker/worker.log 2>/dev/null || echo "(no worker.log)"
+          echo "=== api.log ==="
+          cat services/api/api.log 2>/dev/null || echo "(no api.log)"

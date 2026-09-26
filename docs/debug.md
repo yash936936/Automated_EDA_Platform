@@ -4,7 +4,75 @@
 > "no issues found" — this is the record of what was actually tested, not
 > just what was built.
 
-## [2026-09-26] OpenTelemetry tracing wired up for real (closes Phase 0.1's original gap)
+## [2026-09-26] CI wired up (closes the third and last of Phase 0's tracked gaps)
+**Work:** added `.github/workflows/ci.yml` -- runs the real
+`tests/test_phase0_smoke.py` suite on every push/PR to `main`, against real
+Postgres 16 and Redis 7 service containers (not mocks), a real built API,
+and a real worker process. Matches the local dev topology deliberately:
+Postgres published on the same **5433** host port used everywhere else in
+this repo, so nothing has to special-case "the port is different in CI" --
+one less thing to drift out of sync between environments. `LLM_PROVIDER=fake`
+and no `GEMINI_API_KEY_*` are set on purpose: `test_0_4_live_gemini_call` is
+meant to skip in CI, since a shared CI environment is the wrong place to
+spend real API quota or depend on an external service's uptime on every
+push (contrast with the 2026-09-26 entry above this one, where that same
+test skipping *locally* despite a real key being set was a bug -- here,
+skipping is the correct, intentional behavior).
+**Verified for real, not just written:** could not run actual GitHub
+Actions in this environment, so did the closest possible thing --
+reproduced the exact workflow step-by-step, in order, in a real shell: `npm
+ci` (not `npm install`, to catch a lockfile drifted out of sync with
+`package.json`, which real CI would fail on and local `npm install` would
+silently paper over -- confirmed clean), build, install worker deps, apply
+both migrations against a freshly-dropped-and-recreated database, start
+worker, start API, wait-for-ready via the same "verify, don't just sleep"
+pattern used in `scripts/dev-up.sh`/`.ps1`, then the actual test run:
+`4 passed, 1 skipped` -- the skip being the intended one, since no `.env`
+existed in that shell at all.
+**Still open:** the workflow itself has never executed on GitHub's actual
+runners -- environment differences (network egress rules, exact base image
+package versions, timing under shared/contended CI hardware) could still
+surface something a local dry-run can't. Recommend treating the first real
+push-triggered run as the actual first test of this file, the same caveat
+noted for `dev-up.ps1` back when it couldn't be run on real Windows either.
+This closes out all three gaps `docs/status.md`'s 2026-09-25 entry
+originally tracked for Phase 0 (tracing, live Gemini, CI) -- Phase 0 is now
+done against every criterion in `docs/phases.md`, not just the ones
+verifiable without a live key or a real CI run.
+
+
+**Tested:** Yash set `GEMINI_API_KEY_EDA_CLEAN` in `.env` to a real key,
+still got `SKIPPED (no real Gemini key set for eda_clean)`. Replaced the key
+with a different one, same result -- ruled out the key value itself as the
+cause.
+**Found:** `tests/test_phase0_smoke.py`'s `@pytest.mark.skipif(not
+os.environ.get("GEMINI_API_KEY_EDA_CLEAN"), ...)` decorator is evaluated at
+**collection time** -- the instant pytest imports the test module, before
+any test function body runs. The file never calls `load_dotenv()` itself;
+`.env` only gets loaded by `gemini_provider.py`/`db.py`/`worker.py`, and
+this test file only imports `agent_worker.llm.factory` (which pulls in
+`gemini_provider.py`) *inside* `test_0_4_llm_interface_contract`'s function
+body -- which runs during the test phase, after collection already
+evaluated (and permanently fixed) the skip decision for the test after it.
+So the skip check always read a raw, unloaded `os.environ` and always
+evaluated to "skip", regardless of what `.env` actually contained. This
+wasn't specific to Yash's key at all -- it would have skipped for anyone,
+with any key, every time.
+**Fixed:** added `from dotenv import load_dotenv; load_dotenv()` at the top
+of `tests/test_phase0_smoke.py`, before the `@pytest.mark.skipif` line.
+**Verified:** reconstructed the old (buggy) file and the fixed file
+side-by-side, ran both against the identical `.env` containing a (fake,
+since no real key is available in this environment) `GEMINI_API_KEY_EDA_CLEAN`
+-- old version: `SKIPPED`; fixed version: actually attempted the call and
+failed only on `google.genai` rejecting the placeholder key value, which is
+the expected/correct behavior for a fake key. On Yash's machine with his
+real key, this should now genuinely execute and pass rather than skip.
+**Still open:** Yash to confirm `test_0_4_live_gemini_call` actually
+**passes** (not just runs) with his real key -- this fix only proves the
+test now executes; it doesn't by itself confirm the real Gemini API call
+succeeds. CI is still the next and final Phase 0 gap after that.
+
+
 **Work:** `docs/status.md`'s 2026-09-25 entry flagged "no OpenTelemetry
 tracing yet" as the first of three remaining Phase 0 gaps. Closed it:
 - `services/api/src/tracing.ts` (new): sets up a `NodeTracerProvider` with an
@@ -62,14 +130,24 @@ thing Phase 0.1's original passing criterion asked for ("visible in
 OpenTelemetry traces"), across a real process/language boundary, not
 mocked. Re-ran the full `pytest tests/test_phase0_smoke.py -v` afterward:
 still 4 passed, 1 skipped, confirming tracing didn't regress anything.
-**Still open:** `GeminiProvider` untested against the real live API (Yash's
-next step), and no CI (explicitly the step after that, per Yash's stated
-plan). Tracing itself does not yet cover Postgres queries or BullMQ's
-internal operations as spans -- only the API's own route handlers and the
-worker's job processing are instrumented. That's enough to satisfy Phase
-0.1's and 8.3's stated criteria (the round trip and every agent
-call/approval-gate transition are traceable) but is worth knowing as a
-boundary, not a gap, if deeper DB-level tracing is wanted later.
+**Confirmed on Yash's actual machine, not just this sandbox:** after
+`npm install` picked up the new `@opentelemetry/*` packages (`package.json`
+already listed them from this session's work; his `node_modules` just
+predated the install), `docker compose up -d` brought up `jaeger` alongside
+redis/postgres with both ports mapped correctly (`4318`, `16687->16686`).
+Queried Jaeger's own API directly (`GET /api/traces?service=eda-api`) and
+got back the same structure verified in this sandbox: one trace
+(`249008a9c6ad7352a8489a943a8edaa8`) with `POST /api/ping-agent`
+(`eda-api`, root) and `worker.process echo` (`eda-clean-worker`) correctly
+linked via `CHILD_OF`, with `bullmq.job_id`/`bullmq.job_name` attributes on
+the worker span. Tracing is genuinely closed, verified twice independently
+(this sandbox + Yash's real Windows/Docker setup).
+**Still open:** `GeminiProvider` still not confirmed against the real live
+API as of this entry -- `test_0_4_live_gemini_call` was still skipping on
+Yash's machine even after setting `GEMINI_API_KEY_EDA_CLEAN`, a separate,
+new issue investigated in the entry above (newer, since this file is
+newest-first). No CI yet either (the step after that, per Yash's stated
+plan).
 
 
 **Tested:** after the Postgres-password fix, the Redis-mismatch fix (stale
