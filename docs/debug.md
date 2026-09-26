@@ -4,7 +4,74 @@
 > "no issues found" — this is the record of what was actually tested, not
 > just what was built.
 
-## [2026-09-25] Phase 0 fully green on Yash's machine — session closed out
+## [2026-09-26] OpenTelemetry tracing wired up for real (closes Phase 0.1's original gap)
+**Work:** `docs/status.md`'s 2026-09-25 entry flagged "no OpenTelemetry
+tracing yet" as the first of three remaining Phase 0 gaps. Closed it:
+- `services/api/src/tracing.ts` (new): sets up a `NodeTracerProvider` with an
+  OTLP/HTTP exporter, `AsyncHooksContextManager` for context propagation
+  across `await`s, and a `W3CTraceContextPropagator`. Manual spans, not
+  auto-instrumentation -- decided against auto-instrumentation because this
+  service runs as pure ESM (`"type": "module"`), and OTel's Node
+  auto-instrumentation patches modules via a CommonJS require hook that
+  needs `--experimental-loader` wired into how the process is launched; that
+  adds real complexity for a Phase-0-scale codebase with four route
+  handlers. Manual `tracer.startActiveSpan(...)` around each handler in
+  `index.ts` gets the same visibility with no loader changes.
+- `services/api/src/queue.ts`: new `addTracedJob()` helper that injects the
+  active span's W3C `traceparent` into the BullMQ job payload
+  (`_traceCarrier`) before enqueueing. Trace context does not cross the
+  Redis boundary on its own -- the Node API and Python worker are separate
+  processes with no shared memory, so without this, the worker's span would
+  start a disconnected trace instead of continuing the one the API started.
+- `services/agent-worker/agent_worker/tracing.py` (new): same shape on the
+  Python side -- `TracerProvider` + `OTLPSpanExporter`, plus
+  `extract_context()` which pulls `_traceCarrier` back out of the job data
+  and returns it as a parent context for the worker's span.
+- `services/agent-worker/agent_worker/worker.py`'s `process()` now wraps
+  every job in `tracer.start_as_current_span(..., context=parent_ctx, ...)`,
+  recording exceptions and setting `ERROR` status on failure so a failed job
+  is visible as an error span, not just a log line.
+- `docker-compose.yml`: added a `jaeger` service (`jaegertracing/all-in-one`)
+  with `COLLECTOR_OTLP_ENABLED=true`, UI on host port **16687** (not
+  Jaeger's usual 16686) specifically because Yash already has a separate
+  Jaeger container running for something else on this machine (visible in
+  an earlier Docker Desktop screenshot this session) -- reusing 16686 would
+  have risked exactly the "something else is listening on the port I
+  assumed was free" class of bug this whole debugging session kept hitting.
+- `.env.example`: added `OTEL_EXPORTER_OTLP_ENDPOINT` (defaults to the
+  `jaeger` service) and `OTEL_DEBUG` (prints every span to stdout too, for
+  sanity-checking without opening the Jaeger UI).
+**Found along the way:** `worker.py` printed its startup/status lines with
+default Python stdout buffering, which is block-buffered (not line-buffered)
+whenever stdout isn't a terminal -- i.e. every single time this repo's own
+scripts (`dev-up.sh`/`dev-up.ps1`) or this debugging session redirected it
+to a log file. `worker.log` could sit empty for a long stretch after actual
+startup, which would have looked like "the worker didn't start" during any
+future debugging session for a completely unrelated reason. Fixed with
+`sys.stdout.reconfigure(line_buffering=True)` at worker startup.
+**Verified for real, not just reviewed:** could not use Docker in the
+verification environment (same limitation as every prior session), so
+downloaded the actual `jaeger-all-in-one` v1.60.0 Linux binary from its
+GitHub release and ran it directly with `COLLECTOR_OTLP_ENABLED=true`. Built
+the real API, ran the real worker, fired a real `POST /api/ping-agent`, then
+queried Jaeger's own HTTP query API (`/api/traces?service=eda-api`) and
+confirmed **one trace ID containing two linked spans**: `POST
+/api/ping-agent` (service `eda-api`, root span) with `worker.process echo`
+(service `eda-clean-worker`) as its correctly-linked child -- i.e. the exact
+thing Phase 0.1's original passing criterion asked for ("visible in
+OpenTelemetry traces"), across a real process/language boundary, not
+mocked. Re-ran the full `pytest tests/test_phase0_smoke.py -v` afterward:
+still 4 passed, 1 skipped, confirming tracing didn't regress anything.
+**Still open:** `GeminiProvider` untested against the real live API (Yash's
+next step), and no CI (explicitly the step after that, per Yash's stated
+plan). Tracing itself does not yet cover Postgres queries or BullMQ's
+internal operations as spans -- only the API's own route handlers and the
+worker's job processing are instrumented. That's enough to satisfy Phase
+0.1's and 8.3's stated criteria (the round trip and every agent
+call/approval-gate transition are traceable) but is worth knowing as a
+boundary, not a gap, if deeper DB-level tracing is wanted later.
+
+
 **Tested:** after the Postgres-password fix, the Redis-mismatch fix (stale
 worker vs. Redis Cloud), and bringing the stopped Docker containers back up
 (`docker compose up -d` -- they'd simply stopped at some point, not a config

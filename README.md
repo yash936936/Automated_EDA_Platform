@@ -39,7 +39,7 @@ workflow gaps).
 **Manual path**, if you want to see each step (or the scripts don't fit your
 setup):
 ```bash
-docker compose up -d          # redis + postgres (postgres on host port 5433)
+docker compose up -d          # redis + postgres + jaeger (postgres on host port 5433)
 cp .env.example .env          # PGPORT=5433 must match docker-compose.yml
 
 # only needed if the postgres volume already existed before this docker-compose
@@ -82,6 +82,16 @@ curl -X POST http://127.0.0.1:4000/api/runs/<runId>/start
 curl http://127.0.0.1:4000/api/runs/<runId>/pending-approval
 curl -X POST http://127.0.0.1:4000/api/approvals/<pendingId>/resolve -d '{"decision":"approved"}' -H 'Content-Type: application/json'
 ```
+
+## Tracing
+Every `ping-agent` call (and every other route) produces a real
+OpenTelemetry trace spanning both the API and the worker, linked across the
+Redis/BullMQ boundary via a W3C traceparent carried in the job payload. View
+them in Jaeger at **http://localhost:16687** (16687, not Jaeger's usual
+16686 — check `docker ps` first if you already have a separate Jaeger
+instance running, since that's exactly the kind of port assumption that's
+bitten this repo before; see `docs/debug.md`'s 2026-09-26 entry). Search by
+service name `eda-api` or `eda-clean-worker`.
 
 ## Known gaps (honest, not swept under the rug)
 - OpenTelemetry tracing is **not** wired up yet — Phase 0.1's passing

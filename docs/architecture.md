@@ -84,8 +84,20 @@ agents themselves — they're shared services/passes invoked by the agents.
 - **Data quality score:** pure computation (`src/shared/quality_score/`), no LLM.
 - **Connectors:** standard ETL adapters (`src/shared/connectors/`) — S3, Google
   Sheets, Postgres (ingestion); PowerBI/Tableau/Looker Studio (export).
-- **Observability:** OpenTelemetry structured logging/tracing across all
-  agents and the API gateway — not an LLM watching other LLMs.
+- **Observability:** OpenTelemetry tracing across the API gateway and the
+  EDA/Clean worker, wired up as of Phase 0.4 (`services/api/src/tracing.ts`,
+  `services/agent-worker/agent_worker/tracing.py`). Manual spans, not
+  auto-instrumentation -- the API runs as pure ESM, where OTel's Node
+  auto-instrumentation needs a `--experimental-loader` hook this repo
+  doesn't wire in, so route handlers and the worker's job processor create
+  spans explicitly instead. Trace context crosses the Redis/BullMQ boundary
+  via a W3C `traceparent` injected into the job payload itself
+  (`_traceCarrier`) since the two processes share no memory -- this is what
+  makes one API request and the worker's handling of its job show up as a
+  single linked trace rather than two disconnected ones. Exports as OTLP/HTTP
+  to the `jaeger` service in `docker-compose.yml` (UI on :16687, not
+  Jaeger's usual :16686, in case another Jaeger instance is already running
+  locally) — not an LLM watching other LLMs.
 
 ## Data flow
 1. User uploads a file or searches/imports via Kaggle (Agent 1) → dataset

@@ -3,6 +3,29 @@
 > Log every session here, newest at top. This is the first thing to read
 > after `context.md` when resuming work.
 
+## [2026-09-26] OpenTelemetry tracing closed out (first of Phase 0's three remaining gaps)
+**Current phase:** still Phase 0, one gap down, two to go. Full details in
+`docs/debug.md`'s 2026-09-26 entry. Summary: the API gateway and the
+EDA/Clean worker now both create real spans (manual, not
+auto-instrumentation — this API is pure ESM, which complicates OTel's
+auto-instrumentation hook), a W3C traceparent rides along inside the BullMQ
+job payload so a request and the worker's handling of it link into one
+trace instead of two, and everything exports as OTLP/HTTP to a new `jaeger`
+service in `docker-compose.yml` (UI at `localhost:16687` — 16687, not
+16686, since Yash already runs a separate Jaeger container for something
+else). Verified against a real Jaeger binary, not reviewed: one trace ID
+with two correctly-linked spans (`eda-api` → `eda-clean-worker`) for a real
+`POST /api/ping-agent` call. Also fixed a real latent bug found along the
+way: the worker's stdout was block-buffered whenever redirected to a log
+file (i.e. every time any script or debugging session in this repo has
+redirected it), which could make `worker.log` look empty/stale for a while
+after real startup — forced line-buffering to fix.
+**Next (Yash's stated plan, in order):** (1) confirm the live Gemini
+integration now that real API keys are connected — `test_0_4_live_gemini_call`
+last skipped because `GEMINI_API_KEY_EDA_CLEAN` specifically wasn't
+populated; (2) CI, so `pytest tests/test_phase0_smoke.py` runs automatically
+instead of only when someone remembers to run it locally.
+
 ## [2026-09-25] Phase 0 confirmed fully green on Yash's actual machine
 **Current phase:** Phase 0 is done against its `docs/phases.md` criteria,
 with three honest gaps still open (below) — this was a multi-round

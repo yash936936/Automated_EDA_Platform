@@ -12,10 +12,24 @@ queue as the Node API gateway. Handles three job types:
 """
 import asyncio
 import os
+import sys
 import uuid
 from bullmq import Worker
 from dotenv import load_dotenv
 from agent_worker.db import get_conn
+from agent_worker.tracing import tracer, extract_context
+from opentelemetry.trace import SpanKind, Status, StatusCode
+
+# Python block-buffers stdout when it isn't a terminal (i.e. any time it's
+# redirected to a log file, as dev-up.sh/dev-up.ps1 and every debugging
+# session in this repo have done) -- print() output can sit invisible in an
+# internal buffer for a long time instead of reaching the file immediately.
+# This has silently made worker.log look empty/stale during startup
+# debugging more than once. Force line buffering unconditionally so log
+# output is trustworthy the moment it's written, not whenever the buffer
+# happens to flush.
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 load_dotenv()  # reads .env from CWD if present; no-op if the file doesn't exist
 
@@ -114,7 +128,20 @@ async def process(job, token):
     handler = HANDLERS.get(job.name)
     if handler is None:
         raise ValueError(f"no handler for job type {job.name}")
-    return handler(job.data)
+    parent_ctx = extract_context(job.data)
+    with tracer.start_as_current_span(
+        f"worker.process {job.name}",
+        context=parent_ctx,
+        kind=SpanKind.CONSUMER,
+        attributes={"bullmq.job_id": str(job.id), "bullmq.job_name": job.name},
+    ) as span:
+        try:
+            result = handler(job.data)
+            return result
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
 
 
 async def main():

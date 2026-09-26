@@ -1,5 +1,6 @@
 import { Queue, QueueEvents } from "bullmq";
 import "dotenv/config";
+import { context, propagation } from "@opentelemetry/api";
 
 // Reads from .env (see .env.example). Falls back to local defaults so the
 // Phase 0 sandbox setup keeps working with no .env file present at all.
@@ -46,4 +47,17 @@ edaCleanQueue.client
       `something other than the docker-compose redis container is listening on that host/port.`
     )
   );
+
+// Trace context does not cross the Redis/BullMQ boundary on its own -- the
+// Python worker runs in a separate process with no shared memory, so the
+// only way to link "API enqueued this job" and "worker processed this job"
+// into a single trace is to carry the W3C traceparent explicitly inside the
+// job payload itself, the same way it'd ride along in an HTTP header. Every
+// call site should use this instead of edaCleanQueue.add directly, so no job
+// type accidentally loses its trace context.
+export async function addTracedJob(name: string, data: Record<string, unknown>) {
+  const carrier: Record<string, string> = {};
+  propagation.inject(context.active(), carrier);
+  return edaCleanQueue.add(name, { ...data, _traceCarrier: carrier });
+}
 
