@@ -4,6 +4,21 @@
 > "no issues found" — this is the record of what was actually tested, not
 > just what was built.
 
+## [2026-09-26] CI's first real run on GitHub Actions — passed
+**Tested:** pushed the tracing/CI/test-fix work to `main` (commit `4e95fe7`).
+This triggered `Phase 0 CI`'s actual first execution on GitHub's own
+runners -- the one thing the local dry-run in the entry below couldn't
+prove, since it's a different environment (network egress rules, base image
+package versions, contended shared hardware) than any local shell.
+**Result:** green. `Phase 0 CI #1` completed in 1m 1s against commit
+`4e95fe7` on `main`. No environment-specific surprises -- the local dry-run
+turned out to be an accurate predictor of the real run.
+**Status:** every honest gap this session tracked for Phase 0 is now
+closed with real evidence, not just code review: tracing (verified via a
+real Jaeger binary, twice independently), live Gemini (verified on Yash's
+machine, real key, real pass), and CI (verified on real GitHub Actions,
+real green run). Phase 0 is done.
+
 ## [2026-09-26] CI wired up (closes the third and last of Phase 0's tracked gaps)
 **Work:** added `.github/workflows/ci.yml` -- runs the real
 `tests/test_phase0_smoke.py` suite on every push/PR to `main`, against real
@@ -29,18 +44,15 @@ worker, start API, wait-for-ready via the same "verify, don't just sleep"
 pattern used in `scripts/dev-up.sh`/`.ps1`, then the actual test run:
 `4 passed, 1 skipped` -- the skip being the intended one, since no `.env`
 existed in that shell at all.
-**Still open:** the workflow itself has never executed on GitHub's actual
-runners -- environment differences (network egress rules, exact base image
-package versions, timing under shared/contended CI hardware) could still
-surface something a local dry-run can't. Recommend treating the first real
-push-triggered run as the actual first test of this file, the same caveat
-noted for `dev-up.ps1` back when it couldn't be run on real Windows either.
-This closes out all three gaps `docs/status.md`'s 2026-09-25 entry
-originally tracked for Phase 0 (tracing, live Gemini, CI) -- Phase 0 is now
-done against every criterion in `docs/phases.md`, not just the ones
+**Still open (at the time this entry was written):** the workflow had not
+yet executed on GitHub's actual runners -- see the entry above this one
+(newer) for that confirmation, which came back green on the very first
+real push. This closes out all three gaps `docs/status.md`'s 2026-09-25
+entry originally tracked for Phase 0 (tracing, live Gemini, CI) -- Phase 0
+is now done against every criterion in `docs/phases.md`, not just the ones
 verifiable without a live key or a real CI run.
 
-
+## [2026-09-26] test_0_4_live_gemini_call kept skipping despite a real key being set
 **Tested:** Yash set `GEMINI_API_KEY_EDA_CLEAN` in `.env` to a real key,
 still got `SKIPPED (no real Gemini key set for eda_clean)`. Replaced the key
 with a different one, same result -- ruled out the key value itself as the
@@ -72,7 +84,7 @@ real key, this should now genuinely execute and pass rather than skip.
 test now executes; it doesn't by itself confirm the real Gemini API call
 succeeds. CI is still the next and final Phase 0 gap after that.
 
-
+## [2026-09-26] OpenTelemetry tracing wired up for real (closes Phase 0.1's original gap)
 **Work:** `docs/status.md`'s 2026-09-25 entry flagged "no OpenTelemetry
 tracing yet" as the first of three remaining Phase 0 gaps. Closed it:
 - `services/api/src/tracing.ts` (new): sets up a `NodeTracerProvider` with an
@@ -149,7 +161,7 @@ new issue investigated in the entry above (newer, since this file is
 newest-first). No CI yet either (the step after that, per Yash's stated
 plan).
 
-
+## [2026-09-25] Phase 0 fully green on Yash's machine — session closed out
 **Tested:** after the Postgres-password fix, the Redis-mismatch fix (stale
 worker vs. Redis Cloud), and bringing the stopped Docker containers back up
 (`docker compose up -d` -- they'd simply stopped at some point, not a config
@@ -190,7 +202,7 @@ explicitly tracked. Recommend restarting Postgres/Redis health checks with
 failure is a new bug -- three of the six issues this session were
 "something wasn't running," not code.
 
-
+## [2026-09-25] Postgres fixed, then test_0_1/0_3 failed again — stale worker on a different Redis than the API
 **Tested:** Yash fixed `PGPASSWORD` (confirmed: `Postgres OK
 (127.0.0.1:5433/eda_platform)` with no warning). Re-ran the full suite and
 got the exact same two failures as the very first report -- `test_0_1`
@@ -229,7 +241,7 @@ time `.env` changes, both the worker and the API process must be fully
 restarted** -- there is no live-reload of environment variables in either,
 by design of `python-dotenv`/Node's process.env model.
 
-
+## [2026-09-25] Postgres auth failure with correct PGPORT=5433 — likely a native PG17 collision
 **Tested:** Yash ran `node dist\index.js` directly (bypassing the scripts
 entirely, correctly isolating the API), got `API gateway listening on :4000`
 followed immediately by `password authentication failed for user "postgres"`

@@ -12,8 +12,9 @@
 real on Yash's own machine, all 5 tests in `tests/test_phase0_smoke.py`
 green including the live Gemini call, OpenTelemetry tracing verified against
 a real Jaeger instance (independently, twice — this session's environment
-and Yash's), and CI (`.github/workflows/ci.yml`) running the suite on every
-push/PR. See `docs/debug.md`'s five 2026-09-25/26 entries for the full
+and Yash's), and CI (`.github/workflows/ci.yml`) confirmed with a real green
+run on GitHub Actions (`Phase 0 CI #1`, commit `4e95fe7`), not just written
+and dry-run locally. See `docs/debug.md`'s six 2026-09-25/26 entries for the full
 multi-round debugging trail — this was a real, hard-won closure across
 several sessions, not a one-shot build. Every criterion in this phase's
 sub-phases below, plus the phase-level "done when" statement, is now met.

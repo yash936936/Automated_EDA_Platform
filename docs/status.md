@@ -27,14 +27,15 @@ run. Full trail across three `docs/debug.md` entries this date:
    real Postgres/Redis service containers on every push/PR to `main`,
    intentionally with no Gemini key (that test correctly skips in CI — a
    shared CI environment is the wrong place to spend real API quota on
-   every push). Dry-ran the exact workflow steps locally, in order,
-   including `npm ci` specifically to catch a lockfile drift `npm install`
-   would silently paper over: `4 passed, 1 skipped`, the skip being the
-   intended one.
-**Open, honestly:** the CI workflow has never executed on GitHub's actual
-runners yet — first real push is the first true test of that file, same
-caveat as `dev-up.ps1` before Yash's machine confirmed it. No deeper
-gaps are being tracked for Phase 0 beyond that.
+   every push). Dry-ran the exact workflow steps locally first, then pushed
+   to `main` (commit `4e95fe7`) for the real test: **`Phase 0 CI #1` passed
+   on GitHub's actual runners, 1m 1s, green.** The local dry-run turned out
+   to accurately predict the real one.
+**Closed, for real:** all three gaps this session tracked for Phase 0 —
+tracing, live Gemini, CI — are verified with actual evidence (a real Jaeger
+trace, a real passing pytest run with a live key, a real green GitHub
+Actions run), not just code written and reviewed. Nothing further being
+tracked for Phase 0.
 **Next:** proceed to Phase 1 (Ingestion & Dataset Discovery) — `docs/phases.md`
 has the sub-phase breakdown (1.1 file upload, 1.2 Kaggle search/import, 1.3
 PII pre-scan).
