@@ -17,6 +17,30 @@ services:
       # entirely -- run the two files manually with psql in that case (see
       # README), or `docker compose down -v` to force a clean re-init.
       - ./db/migrations:/docker-entrypoint-initdb.d:ro
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # S3-compatible API -- matches S3_ENDPOINT in .env.example
+      - "9001:9001"   # web console, for eyeballing uploaded objects
+    volumes:
+      - miniodata:/data
+  # One-shot container that creates the bucket on first startup and then
+  # exits (status 0) -- `docker compose up` will show it as "Exited (0)",
+  # that's expected, not a failure. Re-running is a no-op if the bucket
+  # already exists (`mc mb -p` is idempotent).
+  createbuckets:
+    image: minio/mc:latest
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "
+      until (mc alias set local http://minio:9000 minioadmin minioadmin) do sleep 1; done;
+      mc mb -p local/eda-platform-datasets;
+      exit 0;
+      "
   jaeger:
     image: jaegertracing/all-in-one:1.60
     environment:
@@ -33,3 +57,4 @@ services:
       - "4318:4318"
 volumes:
   pgdata:
+  miniodata:

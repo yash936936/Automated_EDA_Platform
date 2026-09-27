@@ -5,9 +5,18 @@ import { Pool } from "pg";
 import "dotenv/config";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { tracer } from "./tracing.js";
+import Busboy from "busboy";
+import { randomUUID } from "crypto";
+import { Upload } from "@aws-sdk/lib-storage";
+import { s3, S3_BUCKET } from "./storage.js";
 
 const app = express();
 app.use(express.json());
+// Dev-only test harness for exercising /api/datasets/upload by hand (drag
+// and drop) without a real frontend -- the frontend framework itself is
+// still an open decision (not settled anywhere in docs/trd.md), so this is
+// deliberately vanilla HTML/JS, not a stand-in for that decision.
+app.use(express.static("public"));
 
 const pool = new Pool({
   host: process.env.PGHOST || "127.0.0.1",
@@ -113,6 +122,107 @@ app.post("/api/approvals/:id/resolve", async (req, res) => {
       span.end();
     }
   });
+});
+
+// --- 1.1: file upload path ---------------------------------------------
+// Streams the multipart file straight into S3/MinIO (bounded-memory
+// multipart PUT via @aws-sdk/lib-storage's Upload, never buffering the
+// whole file in RAM or on local disk) and inserts a `datasets` row with
+// status='ingesting'. Anything heavier than moving bytes -- size, row/column
+// counts, checksum -- is explicitly NOT computed here: it's handed to the
+// Python worker via the job queue (see agent_worker.worker.handle_ingest_dataset)
+// so a large file's CPU-bound parsing work never runs on the request thread.
+// Streaming the bytes themselves during the request is unavoidable (the
+// upload *is* the request body) but is I/O-bound async work, not a blocking
+// call -- it doesn't hold the Node event loop the way synchronous parsing would.
+app.post("/api/datasets/upload", async (req, res) => {
+  await tracer.startActiveSpan("POST /api/datasets/upload", async (span) => {
+    const datasetId = randomUUID();
+    let sawFile = false;
+    let uploadDone: Promise<unknown> | null = null;
+    let originalFilename = "";
+    let mimeType = "";
+    let storageKey = "";
+    let responded = false;
+
+    const fail = (status: number, error: string, err?: unknown) => {
+      if (err) {
+        span.recordException(err as Error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: error });
+      }
+      if (!responded && !res.headersSent) {
+        responded = true;
+        res.status(status).json({ ok: false, error });
+      }
+      span.end();
+    };
+
+    const bb = Busboy({ headers: req.headers, limits: { files: 1 } });
+
+    bb.on("file", (_field, fileStream, info) => {
+      sawFile = true;
+      originalFilename = info.filename;
+      mimeType = info.mimeType || "application/octet-stream";
+      storageKey = `uploads/${datasetId}/${info.filename}`;
+      span.setAttribute("eda.dataset_id", datasetId);
+      span.setAttribute("eda.storage_key", storageKey);
+
+      const upload = new Upload({
+        client: s3,
+        params: { Bucket: S3_BUCKET, Key: storageKey, Body: fileStream, ContentType: mimeType },
+        // 8MB parts -- keeps memory bounded regardless of total file size
+        // (a 500MB file streams as ~63 parts, never sitting in RAM whole).
+        partSize: 8 * 1024 * 1024,
+        queueSize: 4,
+      });
+      uploadDone = upload.done();
+    });
+
+    bb.on("error", (err) => fail(400, `upload stream error: ${String(err)}`, err));
+
+    bb.on("finish", async () => {
+      try {
+        if (!sawFile || !uploadDone) {
+          fail(400, "no file field found in multipart body");
+          return;
+        }
+        await uploadDone; // I/O-bound wait on the S3 PUT, not a blocking call
+
+        await pool.query(
+          `INSERT INTO datasets (id, name, source, storage_path, status, original_filename, mime_type)
+           VALUES ($1, $2, 'upload', $3, 'ingesting', $4, $5)`,
+          [datasetId, originalFilename, storageKey, originalFilename, mimeType]
+        );
+
+        const job = await addTracedJob("ingest_dataset", { datasetId, storageKey, originalFilename });
+        span.setAttribute("bullmq.job_id", String(job.id));
+        responded = true;
+        res.json({ ok: true, datasetId, jobId: job.id, status: "ingesting" });
+      } catch (err: any) {
+        fail(500, String(err?.message ?? err), err);
+        return;
+      } finally {
+        span.end();
+      }
+    });
+
+    req.on("aborted", () => fail(499, "client aborted upload"));
+    req.pipe(bb);
+  });
+});
+
+app.get("/api/datasets/:id", async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM datasets WHERE id = $1", [req.params.id]);
+  if (!rows[0]) {
+    res.status(404).json({ ok: false, error: "not found" });
+    return;
+  }
+  res.json({ ok: true, dataset: rows[0] });
+});
+
+app.get("/api/datasets", async (_req, res) => {
+  const { rows } = await pool.query("SELECT * FROM datasets ORDER BY created_at DESC LIMIT 50");
+  res.json({ ok: true, datasets: rows });
 });
 
 const PORT = 4000;

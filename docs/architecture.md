@@ -126,8 +126,12 @@ agents themselves — they're shared services/passes invoked by the agents.
 ## File tree (living document — keep in sync with src/)
 ```
 src/
-├── api/                — Node/TS API gateway (not yet scaffolded)
-├── frontend/            — Node/TS frontend (not yet scaffolded)
+├── api/                — Node/TS API gateway
+│   ├── storage.ts        — S3-compatible client (MinIO dev / S3 prod)
+│   └── (public/upload.html — dev-only manual upload test harness, NOT the
+│        product frontend; lives at services/api/public/ in the actual repo)
+├── frontend/            — Node/TS frontend (not yet scaffolded — framework choice
+│                          itself still open, see docs/trd.md)
 ├── agents/
 │   ├── discovery/        — Agent 1
 │   ├── eda_clean/         — Agent 2
@@ -155,6 +159,10 @@ src/
   signal appears (see `docs/decisions.md`).
 - **Postgres** — audit log, versioning/dependency graph, pending approvals,
   playbook definitions, structured stats for chat lookup.
+- **MinIO** (dev) / **S3-compatible object storage** (prod) — uploaded
+  datasets and generated reports (see D-013 in `docs/decisions.md`); accessed
+  via `@aws-sdk/client-s3` (API gateway) and `boto3` (agent worker) against
+  the same `S3_*` env vars.
 - **Presidio-style regex+NER** — PII scan (v1: regex-only scope).
 - **Jinja2/Pandoc/python-docx** — report templating.
 - **OpenTelemetry** — observability.

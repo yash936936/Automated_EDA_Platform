@@ -17,6 +17,7 @@ import uuid
 from bullmq import Worker
 from dotenv import load_dotenv
 from agent_worker.db import get_conn
+from agent_worker.storage import probe_dataset
 from agent_worker.tracing import tracer, extract_context
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
@@ -117,10 +118,66 @@ def handle_playbook_run_resume(job_data):
     return {"resumed": True, "finalStatus": final_status}
 
 
+def handle_ingest_dataset(job_data):
+    """
+    Phase 1.1: the deliberately-async half of the upload path. The API
+    gateway already streamed the file into S3/MinIO and inserted a
+    `datasets` row with status='ingesting' before this job even runs -- this
+    handler does the CPU/IO-bound part (streaming the object back out to
+    compute size/checksum/row-count) off the request thread, then flips the
+    row to 'ready' (or 'failed' with a reason, never leaving it stuck at
+    'ingesting' silently).
+    """
+    dataset_id = job_data["datasetId"]
+    storage_key = job_data["storageKey"]
+    original_filename = job_data.get("originalFilename", "")
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM datasets WHERE id = %s", (dataset_id,))
+            if cur.fetchone() is None:
+                raise RuntimeError(f"dataset {dataset_id} not found (upload row missing)")
+
+        try:
+            metadata = probe_dataset(storage_key, original_filename)
+        except Exception as exc:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE datasets SET status = 'failed', error_message = %s WHERE id = %s",
+                    (str(exc), dataset_id),
+                )
+            conn.commit()
+            raise
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE datasets
+                SET status = 'ready', size_bytes = %s, row_count = %s,
+                    column_count = %s, checksum_sha256 = %s, ingested_at = now()
+                WHERE id = %s
+                """,
+                (
+                    metadata["size_bytes"],
+                    metadata["row_count"],
+                    metadata["column_count"],
+                    metadata["checksum_sha256"],
+                    dataset_id,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"datasetId": dataset_id, **metadata}
+
+
 HANDLERS = {
     "echo": handle_echo,
     "playbook_run": handle_playbook_run,
     "playbook_run_resume": handle_playbook_run_resume,
+    "ingest_dataset": handle_ingest_dataset,
 }
 
 

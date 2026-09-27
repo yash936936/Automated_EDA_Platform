@@ -4,6 +4,22 @@
 > if a decision is reversed, log a new entry that supersedes it and reference
 > the old ID.
 
+## D-013 — Dev/self-hosted object storage: MinIO (S3-compatible) — 2026-09-27
+**Decision:** Use MinIO as the local/dev object storage backend, accessed
+through `@aws-sdk/client-s3` (Node) and `boto3` (Python) against its
+S3-compatible API. Both sides read the same `S3_*` env vars
+(`S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_REGION`,
+`S3_FORCE_PATH_STYLE`).
+**Why:** `docs/trd.md` already specified "object storage (S3-compatible)"
+but never named a concrete provider to develop against — needed one to build
+Phase 1.1. MinIO is genuinely S3-API-compatible (not a lookalike), runs as a
+single docker-compose service with no external account/credentials, and the
+switch to real AWS S3 in production is a config change only (drop
+`S3_ENDPOINT`, set `S3_FORCE_PATH_STYLE=false`) — no code path forks on which
+backend is in use.
+**Affects:** Phase 1.1, `docker-compose.yml`, `.env.example`,
+`docs/architecture.md`, `docs/trd.md`.
+
 ## D-012 — Queue tech: BullMQ (not Celery), shared over one Redis instance — 2026-09-24
 **Decision:** Use BullMQ as the job queue, with the Node API as producer and
 the Python agent worker as consumer via the maintained `bullmq` Python client

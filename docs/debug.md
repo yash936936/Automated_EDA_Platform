@@ -4,6 +4,57 @@
 > "no issues found" — this is the record of what was actually tested, not
 > just what was built.
 
+## [2026-09-27] Phase 1.1 — File upload path
+**Tested:**
+- Wrote `probe_dataset` (services/agent-worker/agent_worker/storage.py) and
+  verified it directly against a **moto-mocked S3 bucket** (no real
+  MinIO/Postgres/Redis available in this sandbox): (1) a small CSV — asserted
+  row_count, column_count, size_bytes, and sha256 checksum all matched
+  ground truth computed independently; (2) a non-CSV binary blob — asserted
+  size/checksum still computed and row/column counts correctly left `None`;
+  (3) the same CSV again with the chunk size forced down to 7 bytes
+  (deliberately smaller than one row) to exercise the line-split-across-
+  chunk-boundary logic — same correct result, so the streaming parser
+  doesn't corrupt rows that straddle a chunk boundary.
+- Type-checked the API gateway (`npx tsc --noEmit`) after adding the
+  `POST /api/datasets/upload` route, `storage.ts`, and the two dataset-read
+  routes — clean, no errors.
+- Syntax/import-checked the Python worker changes (`ast.parse`, plus
+  actually importing `agent_worker.worker` and confirming `ingest_dataset`
+  is registered in `HANDLERS` alongside the Phase 0 handlers).
+- Wrote `tests/test_phase1_1_upload.py` (small-CSV round trip, non-CSV round
+  trip, and an opt-in `RUN_LARGE_UPLOAD_TEST=1` 500MB concurrency test) —
+  collects cleanly under pytest but **was not run against live services**,
+  see "Still open."
+
+**Found:** none in the logic that could be exercised standalone (moto mock).
+
+**Fixed:** n/a — new code, not a fix.
+
+**Still open (do not mark 1.1 fully closed until these are addressed):**
+- **No real end-to-end run.** This sandbox has no `docker` binary, so
+  `docker compose up` (redis + postgres + the **new** minio/createbuckets
+  services) was never started, migration `002_dataset_ingestion.sql` was
+  never applied to a real Postgres, and neither
+  `POST /api/datasets/upload` nor the `ingest_dataset` BullMQ job has been
+  exercised end-to-end. Everything above verifies the *logic* in isolation
+  (mocked S3) — not the *wiring* (real S3 client config against real MinIO,
+  a real BullMQ round trip, real Postgres writes, the actual multipart
+  stream through Busboy + `@aws-sdk/lib-storage`'s `Upload`). Same root
+  cause as the PGDATABASE-override gap below (sandbox has no Docker), same
+  remedy: run `pytest tests/test_phase1_1_upload.py -v` against the real
+  stack before treating 1.1 as passing.
+- **500MB stress test never run.** `test_1_1_large_file_does_not_block_event_loop`
+  is gated behind `RUN_LARGE_UPLOAD_TEST=1` precisely because it wasn't run
+  here; it's the test that actually exercises Phase 1.1's stated passing
+  criterion ("large file doesn't block the request thread"), so it matters
+  more than the two tests that only got collection-checked.
+- `docs/architecture.md`'s "File tree" diagram still shows a `src/`-rooted
+  layout that doesn't match the real `services/api/` + `services/agent-worker/`
+  layout Phase 0 actually scaffolded — pre-existing drift, not introduced by
+  this session, but worth a cleanup pass since `docs/workflow.md` calls that
+  section a "living document."
+
 ## [2026-09-26] CI's first real run on GitHub Actions — passed
 **Tested:** pushed the tracing/CI/test-fix work to `main` (commit `4e95fe7`).
 This triggered `Phase 0 CI`'s actual first execution on GitHub's own

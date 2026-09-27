@@ -3,6 +3,59 @@
 > Log every session here, newest at top. This is the first thing to read
 > after `context.md` when resuming work.
 
+## [2026-09-27] Phase 1.1 (file upload path) built, not yet verified end-to-end
+**Current phase:** Phase 1 (Ingestion & Dataset Discovery), sub-phase 1.1.
+**Not marked passing** — see caveats below; built and logic-tested, but never
+run against the real docker-compose stack (no Docker in this session's
+sandbox).
+**What changed:**
+- Added MinIO as the dev object storage backend (D-013) — new
+  `minio`/`createbuckets` services in `docker-compose.yml`, new `S3_*` vars
+  in `.env.example`.
+- `db/migrations/002_dataset_ingestion.sql` — adds `status`,
+  `original_filename`, `mime_type`, `size_bytes`, `row_count`,
+  `column_count`, `checksum_sha256`, `ingested_at`, `error_message` to
+  `datasets`, plus a status-value CHECK constraint.
+- `services/api/src/storage.ts` — S3 client; new `POST /api/datasets/upload`
+  route streams the multipart file straight into MinIO/S3 via
+  `@aws-sdk/lib-storage`'s `Upload` (bounded-memory, 8MB parts), inserts a
+  `status='ingesting'` row, and enqueues an `ingest_dataset` job — nothing
+  CPU-heavier than moving bytes happens on the request thread. Added
+  `GET /api/datasets/:id` and `GET /api/datasets` for polling.
+- `services/agent-worker/agent_worker/storage.py` — `probe_dataset()`
+  streams the object back out of S3 once, computing size/sha256 always and
+  row/column counts for CSV/TSV, without loading the file into memory. New
+  `ingest_dataset` handler in `worker.py` calls it and flips the dataset row
+  to `ready` (or `failed` with a reason).
+- `services/api/public/upload.html` — a vanilla drag-and-drop page to
+  exercise the endpoint by hand. Explicitly **not** the product frontend —
+  frontend framework is still an open decision (see `docs/trd.md`).
+- `services/agent-worker/tests/test_phase1_1_upload.py` — small-CSV and
+  non-CSV round-trip tests, plus an opt-in `RUN_LARGE_UPLOAD_TEST=1` test
+  that checks a concurrent lightweight request stays fast while a 500MB
+  upload is in flight (the actual "doesn't block the request thread"
+  criterion from `docs/phases.md`).
+**Verified this session:** the ingestion metadata logic itself, against a
+moto-mocked S3 bucket (see `docs/debug.md` for the three specific cases,
+including a chunk-boundary edge case). TypeScript compiles clean; Python
+imports clean.
+**Not verified this session (no Docker available in this sandbox):**
+- The new `minio`/`createbuckets` docker-compose services have never
+  actually started.
+- Migration `002` has never run against a real Postgres.
+- No real HTTP round trip through `POST /api/datasets/upload` — the Busboy
+  streaming, the real `@aws-sdk/lib-storage` multipart PUT against real
+  MinIO, and the real BullMQ `ingest_dataset` job dispatch/consumption are
+  all unverified as wired systems, only verified as isolated logic.
+- The 500MB stress test (the test that actually proves the phase's stated
+  passing criterion) has not been run.
+**Next:** run `docker compose up -d`, apply migration 002 (fresh volume
+picks it up automatically; existing volume needs a manual `psql -f`), then
+`pytest tests/test_phase1_1_upload.py -v` (add `RUN_LARGE_UPLOAD_TEST=1` for
+the stress test) on a machine with Docker — most likely yours, per the
+pattern from Phase 0. Only mark 1.1 done in `docs/phases.md` once that's
+green. Then proceed to 1.2 (Kaggle search & import) or 1.3 (PII pre-scan).
+
 ## [2026-09-26] Phase 0 fully closed — tracing, live Gemini, and CI all done
 **Current phase:** Phase 0 is genuinely complete against every criterion in
 `docs/phases.md`, not just the ones that don't need a live key or a real CI

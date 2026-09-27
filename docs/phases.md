@@ -75,7 +75,23 @@ fully traced.
 **Goal:** users can get a dataset into the system, via upload or Kaggle search.
 
 ### 1.1 — File upload path
-**Files touched:** `src/api/upload/`, `src/frontend/upload/`
+**Status: BUILT, not yet passing — 2026-09-27.** Code complete (upload
+route, MinIO storage, `ingest_dataset` job, migration 002, test suite); the
+ingestion logic is verified against a moto-mocked S3, but the real
+docker-compose stack (MinIO included) has never been started and the tests
+have never run against live services — no Docker in the sandbox this was
+built in. See `docs/debug.md` 2026-09-27 and `docs/status.md` for exactly
+what's verified vs. not. Do not check this done until
+`pytest tests/test_phase1_1_upload.py -v` (including
+`RUN_LARGE_UPLOAD_TEST=1`) is actually green on a real machine.
+
+**Files touched:** `services/api/src/storage.ts`, `services/api/src/index.ts`
+(`POST /api/datasets/upload`, `GET /api/datasets[/:id]`),
+`services/api/public/upload.html` (dev test harness only — not the product
+frontend, which is still an unscaffolded/undecided item),
+`services/agent-worker/agent_worker/storage.py` + `worker.py`
+(`ingest_dataset` handler), `db/migrations/002_dataset_ingestion.sql`,
+`docker-compose.yml` (+minio/createbuckets), `.env.example` (+S3_* vars).
 **Work:** drag-and-drop upload → object storage → dataset metadata row in Postgres.
 **Testing:** upload a real CSV (small + a ~500MB stress file) through the UI.
 **Passing criteria:** both files land in storage with correct metadata; the

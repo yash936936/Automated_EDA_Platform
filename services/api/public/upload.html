@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<!--
+  Dev-only manual test harness for POST /api/datasets/upload.
+  This is NOT the product frontend -- frontend framework (React/Vue/etc.) is
+  still an open decision (see docs/trd.md, docs/workflow.md "repo layout").
+  This page exists only so a human can drag a file in and watch
+  ingesting -> ready happen, without curl-ing multipart by hand.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Phase 1.1 upload test harness</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; color: #222; }
+  #drop { border: 2px dashed #888; border-radius: 8px; padding: 48px; text-align: center; color: #666; }
+  #drop.drag { border-color: #2563eb; color: #2563eb; background: #eff6ff; }
+  #log { white-space: pre-wrap; background: #111; color: #0f0; padding: 12px; border-radius: 6px;
+         font-family: ui-monospace, monospace; font-size: 13px; margin-top: 16px; max-height: 320px; overflow: auto; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  .ingesting { background: #fef3c7; color: #92400e; }
+  .ready { background: #dcfce7; color: #166534; }
+  .failed { background: #fee2e2; color: #991b1b; }
+</style>
+</head>
+<body>
+  <h1>Dataset upload — dev test harness</h1>
+  <p>Not the product UI. Drag a file below to exercise <code>POST /api/datasets/upload</code>.</p>
+  <div id="drop">Drop a file here, or <input type="file" id="fileInput" /></div>
+  <div id="log"></div>
+
+<script>
+const dropEl = document.getElementById("drop");
+const logEl = document.getElementById("log");
+const fileInput = document.getElementById("fileInput");
+
+function log(msg) {
+  logEl.textContent += msg + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function uploadFile(file) {
+  log(`Uploading ${file.name} (${(file.size / 1e6).toFixed(2)} MB)...`);
+  const form = new FormData();
+  form.append("file", file);
+  const t0 = performance.now();
+  const res = await fetch("/api/datasets/upload", { method: "POST", body: form });
+  const data = await res.json();
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  if (!data.ok) {
+    log(`Upload failed after ${elapsed}s: ${data.error}`);
+    return;
+  }
+  log(`Upload accepted after ${elapsed}s -> datasetId=${data.datasetId}, jobId=${data.jobId}`);
+  pollStatus(data.datasetId);
+}
+
+async function pollStatus(datasetId) {
+  const res = await fetch(`/api/datasets/${datasetId}`);
+  const data = await res.json();
+  if (!data.ok) {
+    log(`  status check failed: ${data.error}`);
+    return;
+  }
+  const d = data.dataset;
+  log(`  status=${d.status} size_bytes=${d.size_bytes ?? "-"} row_count=${d.row_count ?? "-"} column_count=${d.column_count ?? "-"}`);
+  if (d.status === "ingesting") {
+    setTimeout(() => pollStatus(datasetId), 1000);
+  } else if (d.status === "failed") {
+    log(`  ingestion failed: ${d.error_message}`);
+  } else {
+    log(`  done. checksum=${d.checksum_sha256}`);
+  }
+}
+
+["dragenter", "dragover"].forEach((evt) =>
+  dropEl.addEventListener(evt, (e) => { e.preventDefault(); dropEl.classList.add("drag"); })
+);
+["dragleave", "drop"].forEach((evt) =>
+  dropEl.addEventListener(evt, (e) => { e.preventDefault(); dropEl.classList.remove("drag"); })
+);
+dropEl.addEventListener("drop", (e) => {
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+fileInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (file) uploadFile(file);
+});
+</script>
+</body>
+</html>
