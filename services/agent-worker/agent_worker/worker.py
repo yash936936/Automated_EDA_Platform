@@ -17,7 +17,7 @@ import uuid
 from bullmq import Worker
 from dotenv import load_dotenv
 from agent_worker.db import get_conn
-from agent_worker.storage import probe_dataset
+from agent_worker.storage import probe_dataset, ensure_bucket
 from agent_worker.tracing import tracer, extract_context
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
@@ -202,6 +202,7 @@ async def process(job, token):
 
 
 async def main():
+    ensure_bucket()
     worker = Worker("agent.eda_clean", process, {"connection": REDIS_URL})
     # Print exactly which Redis this process resolved at startup (password
     # redacted) -- if you edit .env's REDIS_* values, any *already-running*

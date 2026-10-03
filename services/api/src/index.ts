@@ -1,14 +1,14 @@
 import "./tracing.js"; // must be first: registers the tracer/context-manager before any span is created
 import express from "express";
 import { edaCleanEvents, addTracedJob } from "./queue.js";
-import { Pool } from "pg";
+import { Pool, types } from "pg";
 import "dotenv/config";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { tracer } from "./tracing.js";
 import Busboy from "busboy";
 import { randomUUID } from "crypto";
 import { Upload } from "@aws-sdk/lib-storage";
-import { s3, S3_BUCKET } from "./storage.js";
+import { s3, S3_BUCKET, ensureBucket } from "./storage.js";
 
 const app = express();
 app.use(express.json());
@@ -17,6 +17,11 @@ app.use(express.json());
 // still an open decision (not settled anywhere in docs/trd.md), so this is
 // deliberately vanilla HTML/JS, not a stand-in for that decision.
 app.use(express.static("public"));
+
+// node-postgres returns BIGINT (OID 20) as a string by default to avoid
+// precision loss past 2^53. datasets.size_bytes / row_count are far below
+// that, and API consumers shouldn't have to parse numeric strings.
+types.setTypeParser(20, (v) => Number(v));
 
 const pool = new Pool({
   host: process.env.PGHOST || "127.0.0.1",
@@ -228,6 +233,7 @@ app.get("/api/datasets", async (_req, res) => {
 const PORT = 4000;
 app.listen(PORT, async () => {
   console.log(`API gateway listening on :${PORT}`);
+  await ensureBucket();
   // Fail loud at boot, not on the first request that happens to touch
   // Postgres -- a bad PGPORT/PGPASSWORD should be obvious immediately.
   try {

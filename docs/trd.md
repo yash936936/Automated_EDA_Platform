@@ -21,7 +21,9 @@
   (TypeSafe AI) evaluated for constrained-choice (`llm_choice`) steps only.
   LiteLLM proxy recommended as the swap point between providers.
 - **Storage:** object storage (S3-compatible) for uploaded datasets and
-  generated reports.
+  generated reports. Self-hosted SeaweedFS in both dev and production
+  (see `docs/decisions.md` D-014/D-016). Production requires an S3 identity
+  config, TLS, and our own replication/backup plan.
 
 ## System requirements
 - Runs as a web service (not a desktop app) — browser-based frontend, backend

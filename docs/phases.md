@@ -75,15 +75,15 @@ fully traced.
 **Goal:** users can get a dataset into the system, via upload or Kaggle search.
 
 ### 1.1 — File upload path
-**Status: BUILT, not yet passing — 2026-09-27.** Code complete (upload
-route, MinIO storage, `ingest_dataset` job, migration 002, test suite); the
-ingestion logic is verified against a moto-mocked S3, but the real
-docker-compose stack (MinIO included) has never been started and the tests
-have never run against live services — no Docker in the sandbox this was
-built in. See `docs/debug.md` 2026-09-27 and `docs/status.md` for exactly
-what's verified vs. not. Do not check this done until
-`pytest tests/test_phase1_1_upload.py -v` (including
-`RUN_LARGE_UPLOAD_TEST=1`) is actually green on a real machine.
+**Status: PASSING on a real stack — 2026-09-27.** All three tests in
+`tests/test_phase1_1_upload.py` passed against docker-compose (SeaweedFS +
+Postgres + Redis), the real API and the real worker, including the 500MB
+upload (~50s) with a concurrent request staying under 2s. Limits of what
+that proves: it was driven through the HTTP API, not the `upload.html`
+drag-and-drop harness (not exercised by hand yet); the event-loop check is a
+single concurrent request, not a load test; the "real frontend" part of the
+original criterion doesn't exist yet (framework undecided). See
+`docs/debug.md`.
 
 **Files touched:** `services/api/src/storage.ts`, `services/api/src/index.ts`
 (`POST /api/datasets/upload`, `GET /api/datasets[/:id]`),

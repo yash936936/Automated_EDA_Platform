@@ -4,3 +4,4 @@
 -r requirements.txt
 pytest
 requests
+requests-toolbelt

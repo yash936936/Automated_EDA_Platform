@@ -22,15 +22,33 @@ _CHUNK_SIZE = 1024 * 1024  # 1MB read chunks -- bounds memory regardless of file
 def get_s3_client():
     return boto3.client(
         "s3",
-        endpoint_url=os.environ.get("S3_ENDPOINT", "http://127.0.0.1:9000"),
-        aws_access_key_id=os.environ.get("S3_ACCESS_KEY", "minioadmin"),
-        aws_secret_access_key=os.environ.get("S3_SECRET_KEY", "minioadmin"),
+        endpoint_url=os.environ.get("S3_ENDPOINT", "http://127.0.0.1:8333"),
+        aws_access_key_id=os.environ.get("S3_ACCESS_KEY", "devkey"),
+        aws_secret_access_key=os.environ.get("S3_SECRET_KEY", "devsecret"),
         region_name=os.environ.get("S3_REGION", "us-east-1"),
         # MinIO needs path-style addressing (bucket.minio.local doesn't
         # resolve); real AWS S3 works with either, so this default is safe
         # to leave as-is even against production S3.
         config=Config(s3={"addressing_style": "path"}),
     )
+
+
+def ensure_bucket():
+    """Idempotent: create the bucket if missing. The API gateway does the same
+    at startup; whichever process starts first wins and the other is a no-op."""
+    s3 = get_s3_client()
+    try:
+        s3.head_bucket(Bucket=S3_BUCKET)
+        return
+    except Exception:
+        pass
+    try:
+        s3.create_bucket(Bucket=S3_BUCKET)
+        print(f'Created S3 bucket "{S3_BUCKET}"')
+    except Exception as exc:
+        if "BucketAlready" in str(exc):
+            return  # raced with the API gateway creating it
+        print(f'Could not create/verify S3 bucket "{S3_BUCKET}": {exc}')
 
 
 def _looks_like_csv(filename: str) -> str | None:

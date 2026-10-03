@@ -3,6 +3,26 @@
 > Log every session here, newest at top. This is the first thing to read
 > after `context.md` when resuming work.
 
+## [2026-09-27] Phase 1.1 PASSING — next is 1.2 (Kaggle search & import)
+**Current phase:** Phase 1, sub-phase 1.1 done; 1.2 and 1.3 remaining.
+**What changed since the "built, unverified" entry below:** ran on a real
+stack (Docker with SeaweedFS, API, worker) — all 3 Phase 1.1 tests pass,
+including the 500MB non-blocking test; Phase 0's 5 tests still pass. Storage
+backend moved MinIO -> SeaweedFS (D-014) after MinIO's public images
+disappeared; production plan is self-hosted SeaweedFS (D-016, supersedes
+R2 in D-015). Fixed along the way: BIGINT-as-string API bug, bucket
+auto-creation at API/worker startup, large-test streaming.
+**Open items / gaps carried forward:**
+- Drag-and-drop harness not tried by hand; no real frontend (framework
+  undecided).
+- SeaweedFS production hardening (identity config, TLS, replication,
+  backups) not done — required before any real deployment (D-016).
+- `architecture.md` file tree still doesn't match `services/` layout.
+- CI doesn't yet run the Phase 1.1 tests (needs SeaweedFS service in CI).
+**Next:** 1.2 Kaggle search & import (Agent 1) needs a Kaggle API
+credential and a Gemini key for query expansion; or 1.3 PII pre-scan, which
+has no external dependencies — your call.
+
 ## [2026-09-27] Phase 1.1 (file upload path) built, not yet verified end-to-end
 **Current phase:** Phase 1 (Ingestion & Dataset Discovery), sub-phase 1.1.
 **Not marked passing** — see caveats below; built and logic-tested, but never

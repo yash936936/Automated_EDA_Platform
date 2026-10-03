@@ -4,6 +4,61 @@
 > "no issues found" — this is the record of what was actually tested, not
 > just what was built.
 
+## [2026-09-27] Phase 1.1 re-run after fixes — all green on Yash's machine
+**Tested:** after rebuilding the API (BIGINT fix) and installing
+`requests-toolbelt`, ran `pytest tests/test_phase1_1_upload.py -v` twice.
+**Found:** run 1: 3 passed in 47.9s; run 2 (`-k large`): 1 passed in 56.7s.
+Note run 1 also executed the 500MB test because `RUN_LARGE_UPLOAD_TEST=1`
+was still set in that PowerShell session from the earlier attempt — so the
+large test has passed twice, not once.
+**Fixed:** nothing new; both earlier bugs (string BIGINTs, generator upload
+in the test client) confirmed fixed.
+**Still open:** manual drag-and-drop via `http://localhost:4000/upload.html`
+not yet tried; checksum correctness is covered by the moto test, not
+asserted against a known hash in the live tests; production hardening of
+SeaweedFS (S3 identity config, TLS, backups — D-016) is untouched.
+
+## [2026-09-27] Phase 1.1 first live run on Yash's machine — real stack works, 3 test/API bugs found
+**Tested:** Yash ran the full stack (docker compose with SeaweedFS, worker,
+API) and `pytest tests/test_phase0_smoke.py` + `test_phase1_1_upload.py`.
+Phase 0: 5/5 passed (including live Gemini). Phase 1.1: uploads reached
+SeaweedFS, the BullMQ `ingest_dataset` job ran, datasets reached
+`status='ready'` — i.e. the real wiring (Busboy -> lib-storage -> SeaweedFS
+-> queue -> boto3 -> Postgres) works, which the moto-only testing could not
+show.
+**Found:**
+- API returned `row_count`/`size_bytes` as strings (`'3'`): node-postgres
+  returns BIGINT as string by default. A real API bug, not just a test issue.
+- The 500MB test failed in the test client: `requests` cannot take a
+  generator in `files=` (`TypeError: bytes-like object is required`). The
+  500MB / non-blocking criterion has therefore NOT been exercised yet.
+**Fixed:** `types.setTypeParser(20, Number)` in `services/api/src/index.ts`;
+large test rewritten to write a temp file and stream it with
+`requests-toolbelt`'s `MultipartEncoder` (added to requirements-dev.txt).
+Not yet re-run after the fixes.
+**Still open:** re-run both Phase 1.1 test files and the large test
+(`RUN_LARGE_UPLOAD_TEST=1`); 1.1 stays unchecked in `phases.md` until the
+large test passes.
+
+## [2026-09-27] MinIO image pull denied from Docker Hub — switched to quay.io mirror
+**Tested:** Yash ran `docker compose up -d` on his own machine (first real
+run of the new minio/createbuckets services from Phase 1.1) and hit
+`Error response from daemon: pull access denied for minio/minio, repository
+does not exist or may require 'docker login'`.
+**Found:** not a local auth/login problem — Docker Hub started denying
+anonymous pulls of `minio/minio` and `minio/mc` outright as of this month
+(2026-09), independent of this project; confirmed via web search that
+multiple unrelated repos hit the identical error the same week. MinIO
+continues to mirror the same images under the same tags to `quay.io`.
+**Fixed:** `docker-compose.yml`'s `minio` and `createbuckets` services now
+pull `quay.io/minio/minio:latest` and `quay.io/minio/mc:latest` instead of
+the Docker Hub `minio/*` names. No other config (env vars, ports, the `mc
+alias set`/`mc mb` bucket-creation command) changes — same images, same
+tags, different registry only. Not yet re-verified on Yash's machine after
+the swap (this fix was made in the sandbox, which still has no Docker) —
+next session should confirm `docker compose up -d` succeeds end to end with
+this change before trusting it further.
+
 ## [2026-09-27] Phase 1.1 — File upload path
 **Tested:**
 - Wrote `probe_dataset` (services/agent-worker/agent_worker/storage.py) and

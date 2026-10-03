@@ -4,7 +4,83 @@
 > if a decision is reversed, log a new entry that supersedes it and reference
 > the old ID.
 
+## D-016 — Production object storage: self-hosted SeaweedFS, replacing Cloudflare R2 — 2026-09-27
+**Decision:** Supersedes D-015. Use self-hosted SeaweedFS (same software as
+dev, D-014) in production instead of Cloudflare R2. No code change: same
+`S3_*` env vars, `S3_FORCE_PATH_STYLE=true`.
+**Why:** user's call — wants an open-source, free option rather than a
+managed vendor. SeaweedFS is Apache 2.0 with production use since ~2015 and
+is already the dev backend, so there is one storage system to learn.
+Garage (AGPL-3.0) was the main alternative; RustFS (Apache 2.0) was ruled out
+for now because its production-readiness status was unclear.
+**Trade-offs accepted (flagged, not resolved):**
+- Durability and backups become our responsibility. R2 handled this; here
+  nothing replicates or backs up data unless we configure it. This matters
+  because the product promises reproducible, auditable dataset versions.
+- Dev mode runs the S3 gateway with no identities. Production must load an
+  S3 identity config and sit behind TLS, unexposed to the public internet.
+- Hosting cost is now a VPS plus disk instead of R2's free tier.
+- Download-heavy traffic is bounded by our host's bandwidth, not free egress.
+**Affects:** `.env.example` (production block), `docs/architecture.md`,
+`docs/trd.md`, future deploy runbook (not yet written).
+
+## D-015 — Production object storage: Cloudflare R2, not AWS S3 — 2026-09-27
+**Superseded by D-016 the same day** — historical only; kept per the
+append-only convention.
+**Decision:** Use Cloudflare R2 as the production object storage backend,
+via the same `S3_*` env vars / provider-agnostic storage layer as dev
+(`S3_ENDPOINT` pointed at the account's R2 endpoint, `S3_FORCE_PATH_STYLE=false`,
+`S3_REGION=auto`). AWS S3 was the original assumption in `docs/trd.md` but
+was never formally decided.
+**Why:** R2 has a genuine free tier (10GB storage, 10M Class A + 1M Class B
+ops/month) backed by a vendor whose core business is storage — a different
+risk profile than MinIO's free-tier retreat (D-013/014), since Cloudflare's
+incentive runs the opposite direction. More importantly for this product's
+actual usage shape: R2 charges **zero egress fees**, while AWS S3 egress is
+usually the line item that surprises people. This product's traffic is
+download-heavy (report/notebook/dataset downloads) relative to upload
+volume, so egress cost — not storage cost — is the number that would
+actually move on AWS. Considered and rejected: Backblaze B2 (comparable free
+tier and a longer track record, but R2's egress model and tighter edge
+integration won out for a product serving user-facing downloads); Oracle
+Cloud "Always Free" (real free tier, weaker API/dev-experience reputation,
+not worth it when R2 fits better anyway).
+**Affects:** `.env.example` (production block), eventual deploy docs/runbook
+(not yet written — flag when deployment is actually set up that the R2 API
+token should be scoped to Object Read & Write on the one bucket, not
+account-wide, matching the per-agent-key blast-radius reasoning already used
+for Gemini keys).
+
+## D-014 — Dev/self-hosted object storage: SeaweedFS, replacing MinIO — 2026-09-27
+**Decision:** Supersedes D-013. Drop MinIO entirely (both `minio/minio` and
+its `quay.io/minio/minio` mirror) and use SeaweedFS's built-in S3 gateway
+(`chrislusf/seaweedfs:latest`, run as `server -dir=/data -s3`) as the dev
+object storage backend instead. Also drop the separate `mc`-based
+bucket-creation container — the API gateway and agent worker each attempt an
+idempotent `HeadBucket`/`CreateBucket` at their own startup instead (whoever
+starts first wins, the other's attempt is a harmless no-op).
+**Why:** D-013 treated "which S3-compatible image to run" as a low-risk
+implementation detail. It wasn't — MinIO's open-source project was archived
+by its own maintainers in April 2026 (pushing users toward a paid "AIStor"
+product), and by September 2026 both Docker Hub and quay.io were returning
+hard 401s/access-denied on every tag of `minio/minio` **and** `minio/mc`,
+not a specific broken tag. That's not a pinning problem to work around, it's
+the vendor deliberately shutting off free public distribution — repointing
+to another registry only bought a few days before quay.io closed the same
+door (confirmed via multiple independent, contemporaneous reports of the
+identical failure across unrelated projects). SeaweedFS is maintained by a
+different org, unaffected by MinIO's business decisions, and its S3 gateway
+is a drop-in replacement for what this project actually needs (one bucket,
+one node, S3-compatible PUT/GET). Removing the `mc` sidecar at the same time
+removes a second dependency on an image from the same now-unreliable source.
+**Affects:** Phase 1.1, `docker-compose.yml`, `.env.example`,
+`docs/architecture.md`, `services/api/src/storage.ts`,
+`services/agent-worker/agent_worker/storage.py`.
+
 ## D-013 — Dev/self-hosted object storage: MinIO (S3-compatible) — 2026-09-27
+**Superseded by D-014 the same day** — see above. Left here per the
+append-only/never-edit convention; do not use MinIO per this entry, it's
+historical only.
 **Decision:** Use MinIO as the local/dev object storage backend, accessed
 through `@aws-sdk/client-s3` (Node) and `boto3` (Python) against its
 S3-compatible API. Both sides read the same `S3_*` env vars

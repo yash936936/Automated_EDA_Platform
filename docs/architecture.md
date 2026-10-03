@@ -127,7 +127,7 @@ agents themselves — they're shared services/passes invoked by the agents.
 ```
 src/
 ├── api/                — Node/TS API gateway
-│   ├── storage.ts        — S3-compatible client (MinIO dev / S3 prod)
+│   ├── storage.ts        — S3-compatible client (SeaweedFS dev and prod)
 │   └── (public/upload.html — dev-only manual upload test harness, NOT the
 │        product frontend; lives at services/api/public/ in the actual repo)
 ├── frontend/            — Node/TS frontend (not yet scaffolded — framework choice
@@ -159,10 +159,12 @@ src/
   signal appears (see `docs/decisions.md`).
 - **Postgres** — audit log, versioning/dependency graph, pending approvals,
   playbook definitions, structured stats for chat lookup.
-- **MinIO** (dev) / **S3-compatible object storage** (prod) — uploaded
-  datasets and generated reports (see D-013 in `docs/decisions.md`); accessed
-  via `@aws-sdk/client-s3` (API gateway) and `boto3` (agent worker) against
-  the same `S3_*` env vars.
+- **SeaweedFS** (dev and prod, self-hosted) — S3-compatible object
+  storage for uploaded datasets and generated reports (see D-014/D-016 in
+  `docs/decisions.md` — this was MinIO through D-013 until MinIO's own
+  project pulled its public images; D-015's Cloudflare R2 was superseded); accessed via `@aws-sdk/client-s3` (API
+  gateway) and `boto3` (agent worker) against the same `S3_*` env vars, so
+  neither codebase forks on which backend is live.
 - **Presidio-style regex+NER** — PII scan (v1: regex-only scope).
 - **Jinja2/Pandoc/python-docx** — report templating.
 - **OpenTelemetry** — observability.

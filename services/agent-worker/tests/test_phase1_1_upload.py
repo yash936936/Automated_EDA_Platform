@@ -107,42 +107,61 @@ def test_1_1_large_file_does_not_block_event_loop():
     responds quickly -- if the upload were blocking Node's event loop, the
     concurrent request would stall behind it.
     """
+    import tempfile
     import threading
+
+    from requests_toolbelt import MultipartEncoder
 
     size = 500 * 1024 * 1024  # 500MB
     chunk = os.urandom(1024 * 1024)
-
-    def file_gen():
-        sent = 0
-        while sent < size:
-            yield chunk
-            sent += len(chunk)
-
     result = {}
 
-    def do_upload():
-        files = {"file": ("stress.bin", file_gen(), "application/octet-stream")}
-        r = requests.post(f"{API}/api/datasets/upload", files=files, timeout=600)
-        result["response"] = r
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".bin")
+    try:
+        for _ in range(size // len(chunk)):
+            tmp.write(chunk)
+        tmp.close()
 
-    upload_thread = threading.Thread(target=do_upload)
-    upload_thread.start()
-    time.sleep(1.5)  # let the upload get underway
+        def do_upload():
+            # MultipartEncoder streams from disk; plain requests(files=...)
+            # would build the whole 500MB body in memory first.
+            with open(tmp.name, "rb") as fh:
+                enc = MultipartEncoder(
+                    fields={"file": ("stress.bin", fh, "application/octet-stream")}
+                )
+                try:
+                    result["response"] = requests.post(
+                        f"{API}/api/datasets/upload",
+                        data=enc,
+                        headers={"Content-Type": enc.content_type},
+                        timeout=600,
+                    )
+                except Exception as exc:
+                    result["error"] = repr(exc)
 
-    t0 = time.time()
-    ping = requests.get(f"{API}/api/datasets", timeout=5)
-    concurrent_latency = time.time() - t0
-    assert ping.status_code == 200
-    assert concurrent_latency < 2.0, (
-        f"a concurrent lightweight request took {concurrent_latency:.2f}s while a large "
-        f"upload was in flight -- suggests the event loop is blocked, not just I/O-waiting"
-    )
+        upload_thread = threading.Thread(target=do_upload)
+        upload_thread.start()
+        time.sleep(1.5)  # let the upload get underway
 
-    upload_thread.join(timeout=600)
-    assert "response" in result, "upload thread never finished"
-    body = result["response"].json()
-    assert body["ok"] is True
+        t0 = time.time()
+        ping = requests.get(f"{API}/api/datasets", timeout=5)
+        concurrent_latency = time.time() - t0
+        assert ping.status_code == 200
+        assert concurrent_latency < 2.0, (
+            f"a concurrent lightweight request took {concurrent_latency:.2f}s while a large "
+            f"upload was in flight -- suggests the event loop is blocked, not just I/O-waiting"
+        )
 
-    dataset = _poll_dataset(body["datasetId"], timeout_s=120)
-    assert dataset["status"] == "ready"
-    assert dataset["size_bytes"] == size
+        upload_thread.join(timeout=600)
+        assert "response" in result, f"upload failed: {result.get('error')}"
+        body = result["response"].json()
+        assert body["ok"] is True, body
+
+        dataset = _poll_dataset(body["datasetId"], timeout_s=180)
+        assert dataset["status"] == "ready", dataset.get("error_message")
+        assert dataset["size_bytes"] == size
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass

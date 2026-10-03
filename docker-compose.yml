@@ -17,30 +17,24 @@ services:
       # entirely -- run the two files manually with psql in that case (see
       # README), or `docker compose down -v` to force a clean re-init.
       - ./db/migrations:/docker-entrypoint-initdb.d:ro
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+  seaweedfs:
+    # See docs/decisions.md D-014: MinIO's open-source project was archived
+    # by its own maintainers (April 2026) and, as of Sept 2026, pulled its
+    # images from public access on BOTH Docker Hub and quay.io -- not a
+    # broken tag, a deliberate shutdown of free distribution. SeaweedFS is a
+    # separate, unrelated, still-actively-built (Apache 2.0) project with
+    # its own S3-compatible gateway; `server -s3` runs a single-node
+    # master+volume+filer+S3-API stack in one container, which is all this
+    # dev setup needs. No `mc`-equivalent sidecar needed -- the API gateway
+    # and agent worker each create the bucket themselves at startup (see
+    # ensureBucket()/ensure_bucket() in storage.ts/storage.py).
+    image: chrislusf/seaweedfs:latest
+    command: server -dir=/data -s3 -s3.port=8333
     ports:
-      - "9000:9000"   # S3-compatible API -- matches S3_ENDPOINT in .env.example
-      - "9001:9001"   # web console, for eyeballing uploaded objects
+      - "8333:8333"   # S3-compatible API -- matches S3_ENDPOINT in .env.example
+      - "9333:9333"   # master API/status, handy for poking at cluster health
     volumes:
-      - miniodata:/data
-  # One-shot container that creates the bucket on first startup and then
-  # exits (status 0) -- `docker compose up` will show it as "Exited (0)",
-  # that's expected, not a failure. Re-running is a no-op if the bucket
-  # already exists (`mc mb -p` is idempotent).
-  createbuckets:
-    image: minio/mc:latest
-    depends_on: [minio]
-    entrypoint: >
-      /bin/sh -c "
-      until (mc alias set local http://minio:9000 minioadmin minioadmin) do sleep 1; done;
-      mc mb -p local/eda-platform-datasets;
-      exit 0;
-      "
+      - seaweedfsdata:/data
   jaeger:
     image: jaegertracing/all-in-one:1.60
     environment:
@@ -57,4 +51,4 @@ services:
       - "4318:4318"
 volumes:
   pgdata:
-  miniodata:
+  seaweedfsdata:
