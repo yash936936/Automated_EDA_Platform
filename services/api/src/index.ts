@@ -1,6 +1,6 @@
 import "./tracing.js"; // must be first: registers the tracer/context-manager before any span is created
 import express from "express";
-import { edaCleanEvents, addTracedJob } from "./queue.js";
+import { edaCleanEvents, addTracedJob, discoveryQueue, discoveryEvents } from "./queue.js";
 import { Pool, types } from "pg";
 import "dotenv/config";
 import { SpanStatusCode } from "@opentelemetry/api";
@@ -228,6 +228,104 @@ app.get("/api/datasets/:id", async (req, res) => {
 app.get("/api/datasets", async (_req, res) => {
   const { rows } = await pool.query("SELECT * FROM datasets ORDER BY created_at DESC LIMIT 50");
   res.json({ ok: true, datasets: rows });
+});
+
+// --- 1.2: Kaggle discovery (Agent 1) ------------------------------------
+// Search/list are quick metadata calls: dispatched to the Python discovery
+// worker via its queue and awaited (D-011). Import is NOT awaited -- it can
+// download up to KAGGLE_MAX_IMPORT_MB -- so it returns 202 and the client
+// polls GET /api/datasets/:id, same ingesting -> ready|failed flow as upload.
+const KAGGLE_REF_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const TABULAR_RE = /\.(csv|tsv)$/i;
+
+async function runDiscoveryJob(name: string, data: Record<string, unknown>, timeoutMs: number) {
+  const job = await addTracedJob(name, data, discoveryQueue);
+  return job.waitUntilFinished(discoveryEvents, timeoutMs);
+}
+
+app.get("/api/discovery/search", async (req, res) => {
+  const q = String(req.query.q ?? "").trim();
+  if (q.length < 2 || q.length > 200) {
+    res.status(400).json({ ok: false, error: "q must be 2-200 characters" });
+    return;
+  }
+  try {
+    const result = await runDiscoveryJob("kaggle_search", { query: q }, 60_000);
+    res.json({ ok: true, ...result });
+  } catch (err: any) {
+    res.status(502).json({ ok: false, error: String(err?.message ?? err) });
+  }
+});
+
+app.get("/api/discovery/files", async (req, res) => {
+  const ref = String(req.query.ref ?? "");
+  if (!KAGGLE_REF_RE.test(ref)) {
+    res.status(400).json({ ok: false, error: "ref must look like owner/dataset-name" });
+    return;
+  }
+  try {
+    const result = await runDiscoveryJob("kaggle_list_files", { ref }, 60_000);
+    res.json({ ok: true, ...result });
+  } catch (err: any) {
+    res.status(502).json({ ok: false, error: String(err?.message ?? err) });
+  }
+});
+
+app.post("/api/discovery/import", async (req, res) => {
+  const ref = String(req.body?.ref ?? "");
+  const fileName = String(req.body?.fileName ?? "");
+  if (!KAGGLE_REF_RE.test(ref)) {
+    res.status(400).json({ ok: false, error: "ref must look like owner/dataset-name" });
+    return;
+  }
+  if (!fileName || fileName.length > 255 || fileName.includes("..") || fileName.startsWith("/") || !TABULAR_RE.test(fileName)) {
+    res.status(400).json({ ok: false, error: "fileName must be a CSV/TSV file listed by /api/discovery/files" });
+    return;
+  }
+  const existing = async () =>
+    (await pool.query(
+      `SELECT id, status FROM datasets
+       WHERE source = 'kaggle' AND source_ref = $1 AND original_filename = $2 AND status <> 'failed' LIMIT 1`,
+      [ref, fileName]
+    )).rows[0];
+
+  const prior = await existing();
+  if (prior) {
+    res.json({ ok: true, datasetId: prior.id, status: prior.status, deduped: true });
+    return;
+  }
+
+  const datasetId = randomUUID();
+  const base = fileName.split("/").pop() as string;
+  const storageKey = `uploads/${datasetId}/${base}`;
+  try {
+    await pool.query(
+      `INSERT INTO datasets (id, name, source, source_ref, storage_path, status, original_filename)
+       VALUES ($1, $2, 'kaggle', $3, $4, 'ingesting', $5)`,
+      [datasetId, `${ref}/${fileName}`, ref, storageKey, fileName]
+    );
+  } catch (err: any) {
+    if (err?.code === "23505") {
+      // lost a double-click race on the unique index -- return the winner
+      const winner = await existing();
+      if (winner) {
+        res.json({ ok: true, datasetId: winner.id, status: winner.status, deduped: true });
+        return;
+      }
+    }
+    res.status(500).json({ ok: false, error: String(err?.message ?? err) });
+    return;
+  }
+  try {
+    const job = await addTracedJob("kaggle_import", { datasetId, ref, fileName, storageKey }, discoveryQueue);
+    res.status(202).json({ ok: true, datasetId, jobId: job.id, status: "ingesting" });
+  } catch (err: any) {
+    await pool.query("UPDATE datasets SET status = 'failed', error_message = $2 WHERE id = $1", [
+      datasetId,
+      `could not enqueue import: ${err?.message ?? err}`,
+    ]);
+    res.status(500).json({ ok: false, error: String(err?.message ?? err) });
+  }
 });
 
 const PORT = 4000;

@@ -98,6 +98,12 @@ frontend, which is still an unscaffolded/undecided item),
 large file doesn't block the request thread (goes through the job queue).
 
 ### 1.2 — Kaggle search & import (Agent 1)
+**Status: LIVE TESTS PASSING, relevance criterion still unscored — 2026-10-03.**
+17 unit + 4 live tests pass against real Kaggle, Gemini and the live stack.
+Not marked done until `scripts/eval_discovery.py` results are scored by a
+human at >= 8/10 queries (run twice to confirm cache hits). See D-017 and
+`docs/debug.md`.
+
 **Files touched:** `src/agents/discovery/`
 **Work:** Kaggle API metadata search; LLM-based query understanding/keyword
 expansion only (not the search itself); result caching.

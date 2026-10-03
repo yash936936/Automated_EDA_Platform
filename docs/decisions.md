@@ -4,6 +4,48 @@
 > if a decision is reversed, log a new entry that supersedes it and reference
 > the old ID.
 
+## D-017 — Phase 1.2 Kaggle discovery: queue split, file-level import, shared token — 2026-10-03
+**Decision:**
+1. Agent 1 gets its own BullMQ queue `agent.discovery` (cap via
+   `DISCOVERY_CONCURRENCY`). Search/list-files are awaited by the API
+   (D-011); import is NOT — it returns 202 and reuses the `ingesting ->
+   ready|failed` status flow from upload (1.1).
+2. Import is per FILE, chosen explicitly by the client from
+   `/api/discovery/files`; v1 accepts only `.csv`/`.tsv`, validated against
+   Kaggle's own listing, capped by `KAGGLE_MAX_IMPORT_MB` (default 1024).
+   Imported files go through the same `ingest_dataset` job as uploads.
+3. Search = original query + at most 2 LLM-suggested alternatives (Gemini,
+   `discovery` key), fused with reciprocal-rank fusion, cached in Postgres
+   (`kaggle_search_cache`, 24h; 1h when LLM expansion fell back). The LLM
+   step can never fail a search (fallback to original query).
+4. Re-importing the same ref+file returns the existing dataset (unique
+   partial index), including under double-click races.
+5. Kaggle SDK (`kaggle>=2`) authenticates via `KAGGLE_API_TOKEN`.
+**Why:** keeps long downloads off HTTP requests; per-agent concurrency per
+the design doc; explicit file choice avoids guessing which file in a
+multi-file dataset the user meant; tabular-only matches what Phase 2 can
+profile.
+**Risks accepted / flagged (NOT resolved):**
+- ONE server-wide Kaggle account serves every user. Kaggle may rate-limit
+  it, and a shared account fronting a multi-user product may sit badly with
+  Kaggle's terms. Fine for development; needs a deliberate answer (per-user
+  tokens, or confirming terms) before real multi-user launch.
+- Dataset licenses vary per dataset. We copy the file into our own storage
+  and later put derived data in reports/exports. License is shown in search
+  results but is NOT yet persisted on the imported dataset. Recommend adding
+  a `source_license` column + showing it in the report before 1.2 is
+  considered production-ready.
+- Kaggle data can contain PII; 1.3's scan must cover this path (it does if
+  hooked into `ingest_dataset`, which both paths share).
+- Discovery handlers run in a thread (`asyncio.to_thread`) so long
+  downloads don't stall BullMQ lock renewal. The existing `agent.eda_clean`
+  `process()` still runs handlers (incl. `ingest_dataset` on large files)
+  directly on the event loop — a latent stall risk for multi-GB files.
+  Not changed here; recommend the same treatment.
+**Affects:** Phase 1.2, `db/migrations/003_discovery.sql`, `.env.example`,
+`services/agent-worker/agent_worker/discovery/`, `worker.py`,
+`services/api/src/{queue,index}.ts`.
+
 ## D-016 — Production object storage: self-hosted SeaweedFS, replacing Cloudflare R2 — 2026-09-27
 **Decision:** Supersedes D-015. Use self-hosted SeaweedFS (same software as
 dev, D-014) in production instead of Cloudflare R2. No code change: same

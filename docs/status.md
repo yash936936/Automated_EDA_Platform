@@ -3,6 +3,26 @@
 > Log every session here, newest at top. This is the first thing to read
 > after `context.md` when resuming work.
 
+## [2026-10-03] Phase 1.2 live tests pass — relevance score pending
+**Update:** all 4 live tests pass against real Kaggle/Gemini (see
+`docs/debug.md`); remaining for 1.2: human-scored `eval_discovery.py`
+(>= 8/10), and the 13s first-search latency is worth fixing.
+**Current phase:** Phase 1, sub-phase 1.2.
+**What changed:** Agent 1 discovery: `GET /api/discovery/search`,
+`GET /api/discovery/files`, `POST /api/discovery/import`; new
+`agent.discovery` queue + worker consumer; Kaggle client wrapper, RRF-fused
+search with LLM query expansion and Postgres cache; async per-file import
+into object storage reusing the 1.1 ingest job; migration 003. Decisions and
+risks in D-017.
+**Verified:** 17 mock-based unit tests pass; TypeScript compiles.
+**Not verified:** everything involving real Kaggle, Gemini or the live stack.
+**To run it:** get a Kaggle API token (kaggle.com/settings/api) into `.env`
+as `KAGGLE_API_TOKEN`; `pip install -r requirements.txt -r
+requirements-dev.txt`; apply migration 003; rebuild/restart API and worker;
+`pytest tests/test_phase1_2_unit.py tests/test_phase1_2_live.py -v`; then
+`python scripts/eval_discovery.py` and score the results.
+**Next:** live verification of 1.2, then 1.3 (PII pre-scan).
+
 ## [2026-09-27] Phase 1.1 PASSING — next is 1.2 (Kaggle search & import)
 **Current phase:** Phase 1, sub-phase 1.1 done; 1.2 and 1.3 remaining.
 **What changed since the "built, unverified" entry below:** ran on a real

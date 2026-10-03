@@ -19,6 +19,11 @@ export const connection = {
 export const edaCleanQueue = new Queue("agent.eda_clean", { connection });
 export const edaCleanEvents = new QueueEvents("agent.eda_clean", { connection });
 
+// Agent 1 (Dataset Discovery) gets its own queue so its concurrency cap is
+// independent of EDA/clean (Phase 1.2).
+export const discoveryQueue = new Queue("agent.discovery", { connection });
+export const discoveryEvents = new QueueEvents("agent.discovery", { connection });
+
 // Always print exactly which Redis this process resolved at startup. If you
 // edit .env's REDIS_* values, any *already-running* API/worker process keeps
 // using whatever it loaded at its own startup -- restarting one side but not
@@ -55,9 +60,13 @@ edaCleanQueue.client
 // job payload itself, the same way it'd ride along in an HTTP header. Every
 // call site should use this instead of edaCleanQueue.add directly, so no job
 // type accidentally loses its trace context.
-export async function addTracedJob(name: string, data: Record<string, unknown>) {
+export async function addTracedJob(
+  name: string,
+  data: Record<string, unknown>,
+  queue: Queue = edaCleanQueue
+) {
   const carrier: Record<string, string> = {};
   propagation.inject(context.active(), carrier);
-  return edaCleanQueue.add(name, { ...data, _traceCarrier: carrier });
+  return queue.add(name, { ...data, _traceCarrier: carrier });
 }
 

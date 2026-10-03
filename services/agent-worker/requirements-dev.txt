@@ -5,3 +5,4 @@
 pytest
 requests
 requests-toolbelt
+moto[s3]

@@ -4,6 +4,54 @@
 > "no issues found" — this is the record of what was actually tested, not
 > just what was built.
 
+## [2026-10-03] Phase 1.2 first live run on Yash's machine — 4/4 live tests pass
+**Tested:** with migration 003 applied, API rebuilt, worker restarted and a
+real `KAGGLE_API_TOKEN`: `tests/test_phase1_2_unit.py` (17 pass) and
+`tests/test_phase1_2_live.py -s` (4 pass, 22.4s).
+**Found / confirmed against real services:** real Kaggle search returns
+results with the fields we map; Gemini query expansion works
+(`expansion=llm`); repeat query is a cache hit (13.34s first, 0.25s second);
+`uciml/iris` lists files, imports end to end to `status='ready'` with
+source/source_ref set and row/column counts populated, via the shared
+`ingest_dataset` job; re-import returns the existing dataset (`deduped`);
+importing a nonexistent file ends `failed` with "not found" instead of
+sticking at `ingesting`. Earlier hiccups were environmental, not code: a
+glued line in requirements.txt (my append bug) and testing against an API
+process still running the pre-1.2 build.
+**Still open (1.2 NOT yet marked passing):**
+- Relevance criterion (>= 8/10 queries) not scored: run
+  `python scripts/eval_discovery.py` twice and record the human score here.
+- First-search latency 13.3s (LLM call + up to 3 sequential Kaggle
+  searches). Not profiled; parallelizing the searches is the obvious fix.
+- Only the happy-path download shape for one small file was observed
+  (raw vs zipped still unknown from this run; both are handled in code).
+- Still from D-017: shared Kaggle token, licence not persisted on import.
+
+## [2026-10-03] Phase 1.2 — Kaggle search & import (Agent 1) built
+**Tested (sandbox, mocks only):** 17 unit tests in
+`tests/test_phase1_2_unit.py`, all pass: LLM expansion parsing + three
+fallback paths (never raises); RRF fusion/dedupe; cache hit on a normalized
+repeat query with zero new Kaggle calls; primary-search failure raises while
+expansion failure is skipped; short TTL for non-LLM results; ref/file/size
+validation; download -> moto S3 round trip; zip-wrapped download extracted
+without zip-slip and with a size cap; missing credentials -> clean
+`KaggleError`. API type-checks (`tsc --noEmit`); worker imports and
+registers `kaggle_search`/`kaggle_list_files`/`kaggle_import`.
+**Found:** one bug in my own test stub (keyed on un-normalized query) —
+fixed. Implementation bugs found: none by the unit tests.
+**Still open (1.2 is NOT passing):**
+- Never run against real Kaggle: the SDK calls (`dataset_list`,
+  `dataset_list_files`, `dataset_download_file`), `file_type="csv"` filter
+  behavior, whether single-file downloads arrive raw or zipped, and
+  `kaggle>=2` compatibility with Python 3.14 are all unverified. The code
+  is written from the SDK's signatures, not from observed behavior.
+- Worker second consumer (`agent.discovery`), migration 003, the three API
+  routes, and the async import -> `ingest_dataset` hand-off are unrun.
+- Relevance criterion (8/10 queries) needs a human: run
+  `python scripts/eval_discovery.py` and record the score here.
+- Gemini query expansion untested against the live model for this prompt.
+- See D-017 for the shared-token, license-persistence and event-loop risks.
+
 ## [2026-09-27] Phase 1.1 re-run after fixes — all green on Yash's machine
 **Tested:** after rebuilding the API (BIGINT fix) and installing
 `requests-toolbelt`, ran `pytest tests/test_phase1_1_upload.py -v` twice.

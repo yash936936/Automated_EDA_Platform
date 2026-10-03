@@ -14,11 +14,14 @@ import asyncio
 import os
 import sys
 import uuid
-from bullmq import Worker
+from bullmq import Worker, Queue
 from dotenv import load_dotenv
 from agent_worker.db import get_conn
 from agent_worker.storage import probe_dataset, ensure_bucket
+from agent_worker.discovery import importer, kaggle_client
+from agent_worker.discovery import search as discovery_search
 from agent_worker.tracing import tracer, extract_context
+from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
 # Python block-buffers stdout when it isn't a terminal (i.e. any time it's
@@ -173,6 +176,102 @@ def handle_ingest_dataset(job_data):
     return {"datasetId": dataset_id, **metadata}
 
 
+# --- Phase 1.2: Agent 1 (Dataset Discovery) --------------------------------
+# Runs on its own queue ("agent.discovery") so its concurrency cap is
+# independent of the EDA/clean queue, per the design doc.
+
+def handle_kaggle_search(job_data):
+    return discovery_search.search(job_data["query"])
+
+
+def handle_kaggle_list_files(job_data):
+    ref = job_data["ref"]
+    importer.validate_ref(ref)
+    files = kaggle_client.list_files(ref)
+    for f in files:
+        f["tabular"] = f["name"].lower().endswith(importer.TABULAR_EXT)
+    return {"ref": ref, "files": files}
+
+
+def _mark_failed(dataset_id, message):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE datasets SET status = 'failed', error_message = %s WHERE id = %s",
+                (message[:1000], dataset_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def handle_kaggle_import(job_data):
+    """Validate -> download that one file -> stream into object storage. The
+    datasets row already exists (status='ingesting', inserted by the API);
+    any failure here flips it to 'failed' with a reason instead of leaving it
+    stuck. The follow-up 'ingest_dataset' job is enqueued by process_discovery."""
+    dataset_id, ref, file_name = job_data["datasetId"], job_data["ref"], job_data["fileName"]
+    storage_key = job_data["storageKey"]
+    try:
+        importer.validate_file(ref, file_name)
+        size = importer.download_to_storage(ref, file_name, storage_key)
+    except Exception as exc:
+        _mark_failed(dataset_id, f"{type(exc).__name__}: {exc}")
+        raise
+    return {"datasetId": dataset_id, "storageKey": storage_key, "originalFilename": file_name, "sizeBytes": size}
+
+
+DISCOVERY_HANDLERS = {
+    "kaggle_search": handle_kaggle_search,
+    "kaggle_list_files": handle_kaggle_list_files,
+    "kaggle_import": handle_kaggle_import,
+}
+
+_ingest_queue = None  # set in main(); the shared EDA/clean queue that owns 'ingest_dataset'
+
+
+async def process_discovery(job, token):
+    handler = DISCOVERY_HANDLERS.get(job.name)
+    if handler is None:
+        raise ValueError(f"no discovery handler for job type {job.name}")
+    parent_ctx = extract_context(job.data)
+    with tracer.start_as_current_span(
+        f"worker.process {job.name}",
+        context=parent_ctx,
+        kind=SpanKind.CONSUMER,
+        attributes={"bullmq.job_id": str(job.id), "bullmq.job_name": job.name},
+    ) as span:
+        try:
+            # Handlers do blocking network/disk I/O (Kaggle download can take
+            # minutes). Run them in a thread so the worker's event loop keeps
+            # renewing the BullMQ job lock instead of the job being flagged
+            # stalled and re-run mid-download. (contextvars, so the trace
+            # context, are copied into the thread by asyncio.to_thread.)
+            result = await asyncio.to_thread(handler, job.data)
+            if job.name == "kaggle_import":
+                carrier = {}
+                inject(carrier)
+                try:
+                    await _ingest_queue.add(
+                        "ingest_dataset",
+                        {
+                            "datasetId": result["datasetId"],
+                            "storageKey": result["storageKey"],
+                            "originalFilename": result["originalFilename"],
+                            "_traceCarrier": carrier,
+                        },
+                    )
+                except Exception as exc:
+                    await asyncio.to_thread(_mark_failed, result["datasetId"], f"could not enqueue ingestion: {exc}")
+                    raise
+            return result
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
+
+
 HANDLERS = {
     "echo": handle_echo,
     "playbook_run": handle_playbook_run,
@@ -202,8 +301,15 @@ async def process(job, token):
 
 
 async def main():
+    global _ingest_queue
     ensure_bucket()
     worker = Worker("agent.eda_clean", process, {"connection": REDIS_URL})
+    _ingest_queue = Queue("agent.eda_clean", {"connection": REDIS_URL})
+    discovery_worker = Worker(
+        "agent.discovery",
+        process_discovery,
+        {"connection": REDIS_URL, "concurrency": int(os.environ.get("DISCOVERY_CONCURRENCY", "2"))},
+    )
     # Print exactly which Redis this process resolved at startup (password
     # redacted) -- if you edit .env's REDIS_* values, any *already-running*
     # worker process keeps using whatever it loaded at its own startup
@@ -214,7 +320,7 @@ async def main():
     # the API/test level. Always check this line matches your current .env
     # before assuming a hang is a code bug.
     redacted = REDIS_URL.replace(f":{_password}@", ":***@") if _password else REDIS_URL
-    print(f"Python agent worker listening on queue agent.eda_clean (redis={redacted}) ...")
+    print(f"Python agent worker listening on queues agent.eda_clean + agent.discovery (redis={redacted}) ...")
     await asyncio.Event().wait()  # run forever
 
 

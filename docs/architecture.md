@@ -40,7 +40,7 @@ agents themselves — they're shared services/passes invoked by the agents.
 - **Key files:** playbook step executor, approval-gate middleware.
 
 ### Agent 1 — Dataset Discovery
-- **Responsibility:** Kaggle API metadata search (no LLM for search itself);
+- **Responsibility:** Kaggle API metadata search (no LLM for search itself; runs on its own `agent.discovery` queue, see D-017);
   LLM only for query understanding/keyword expansion; result caching.
 - **Location:** `src/agents/discovery/`
 - **Depends on:** Kaggle API, Gemini (query expansion only).
