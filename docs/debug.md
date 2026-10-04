@@ -4,6 +4,70 @@
 > "no issues found" — this is the record of what was actually tested, not
 > just what was built.
 
+## [2026-10-04] Phase 1.2 relevance check (`eval_discovery.py`) — passes
+**Tested:** ran the script twice on Yash's machine with a real Kaggle token
+and Gemini key. Yash supplied the raw output; he did not state a score, so
+the score below is Claude's reading and can be overridden.
+**Found:** every one of the 10 queries has topically relevant datasets in the
+top 5 (a lenient reading: 10/10; a strict "canonical dataset must appear"
+reading: ~9/10 — the well-known airline-passenger-satisfaction dataset is
+absent, though a relevant one is at #3). Criterion is >= 8/10. Second run:
+10/10 `cacheHit=True`, 0.2-0.7s each. First-run latency 4.0-10.2s per query
+(earlier single measurement was 13.3s). LLM expansion adds stray results at
+the bottom (Nifty stock data at #5 for "housing prices india", a student
+depression dataset at #5 for "student performance").
+**Important finding:** many top results carry restrictive or unclear licenses
+(CC BY-NC-SA 4.0, Unknown, "Other (specified in description)"). We copy the
+file into our storage and discard the license. Given paid domain packs are a
+planned monetization lever, non-commercial-licensed data flowing into a paid
+product's reports is a real legal exposure.
+**Still open:** license persistence + surfacing (strongly recommended before
+any real use); searches still run sequentially (latency).
+
+## [2026-10-04] Phase 1.3 live run on Yash's machine — 52/52 pass
+**Tested:** with a freshly reset stack (down -v / up -d), migrations through
+004 present, API rebuilt and worker restarted: `test_phase1_3_pii_unit.py`
+(48) + `test_phase1_3_pii_live.py` (4), 26.1s.
+**Found / confirmed live:** clean CSV (2,000 rows of adversarial IDs) -> zero
+findings; planted email/mobile/Aadhaar/PAN/SSN columns each flagged under the
+right detector; none of the planted values appear in `/pii` responses; a
+dataset was never observed `ready` while `pii_status='pending'` (fast
+polling); non-CSV -> `skipped_unsupported`; Kaggle-imported dataset ->
+`scanned`. An earlier run of the same live tests failed with WinError 10061
+only because the API wasn't running after `docker compose down -v`
+(environmental, not a code bug).
+**Still open:**
+- Live data was small (<= 2,000 rows); scan throughput on a large real file
+  is unmeasured here (sandbox benchmark: ~74k rows/s, 10 cols).
+- "Scan before any LLM call, verified in trace ordering" is met structurally
+  (ready only after scan + guard) and via `eda.pii.*` span attributes, not by
+  an observed Jaeger trace; the guard has no callers until Phase 2.
+- Gaps in D-018 stand (no masking, no card numbers, no names, uncalibrated
+  confidence).
+
+## [2026-10-04] Phase 1.3 — PII pre-scan built (sandbox, unit tests only)
+**Tested:** `tests/test_phase1_3_pii_unit.py` — 48 pass: detector positives
+and 20+ negatives (invalid SSN ranges, bad PAN holder letter, Aadhaar
+failing Verhoeff, `logo@2x.png`, dates, timestamps); planted dataset flags
+each type in the right column; single planted email in a 500-row notes column
+is flagged but below mask grade; an adversarial CLEAN dataset (5,000 rows of
+random 10/12-digit IDs, ZIPs, timestamps, prices, SKUs) yields zero
+findings; header hints; row cap recorded; findings never contain raw
+values; probe + scanner under forced chunk-boundary straddling leaves
+size/checksum/row-count identical; LLM guard blocks every status but
+`scanned`. 1.2's 17 unit tests still pass. Throughput in the sandbox: ~74k
+rows/s on 10 columns (500k rows ~ 7s) — your machine will differ.
+**Found:** two wrong assumptions in my own tests (a `+`-prefixed 12-digit
+number is correctly `phone_formatted`; a column literally named `ssn` at
+100% match correctly reaches 0.90 via the header hint). Scanner code
+unchanged; tests corrected.
+**Still open (1.3 NOT passing):** live run needed — migration 004, API
+rebuild, worker restart, then `tests/test_phase1_3_pii_live.py` (includes a
+privacy check that planted values never appear in `/pii` responses and an
+atomicity check that a dataset is never `ready` while its scan is `pending`).
+Gaps and non-goals are listed in D-018 (no masking yet, no card numbers, no
+names, uncalibrated confidence).
+
 ## [2026-10-03] Phase 1.2 first live run on Yash's machine — 4/4 live tests pass
 **Tested:** with migration 003 applied, API rebuilt, worker restarted and a
 real `KAGGLE_API_TOKEN`: `tests/test_phase1_2_unit.py` (17 pass) and

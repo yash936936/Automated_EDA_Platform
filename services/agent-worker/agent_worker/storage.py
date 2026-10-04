@@ -51,7 +51,7 @@ def ensure_bucket():
         print(f'Could not create/verify S3 bucket "{S3_BUCKET}": {exc}')
 
 
-def _looks_like_csv(filename: str) -> str | None:
+def tabular_delimiter(filename: str) -> str | None:
     lower = filename.lower()
     if lower.endswith(".tsv"):
         return "\t"
@@ -60,7 +60,7 @@ def _looks_like_csv(filename: str) -> str | None:
     return None
 
 
-def probe_dataset(storage_key: str, original_filename: str) -> dict:
+def probe_dataset(storage_key: str, original_filename: str, observer=None) -> dict:
     """
     Streams the object from S3/MinIO exactly once, computing size + sha256
     checksum always, and row/column counts for CSV/TSV files -- without ever
@@ -78,7 +78,7 @@ def probe_dataset(storage_key: str, original_filename: str) -> dict:
     obj = s3.get_object(Bucket=S3_BUCKET, Key=storage_key)
     body = obj["Body"]  # botocore StreamingBody, chunk-iterable
 
-    delimiter = _looks_like_csv(original_filename)
+    delimiter = tabular_delimiter(original_filename)
     sha256 = hashlib.sha256()
     size_bytes = 0
     row_count = None
@@ -105,8 +105,12 @@ def probe_dataset(storage_key: str, original_filename: str) -> dict:
         for i, fields in enumerate(csv.reader(hashed_lines(), delimiter=delimiter)):
             if i == 0:
                 column_count = len(fields)
+                if observer is not None:
+                    observer.set_header(fields)
             else:
                 row_count += 1
+                if observer is not None:
+                    observer.add_row(fields)
     else:
         for chunk in body.iter_chunks(chunk_size=_CHUNK_SIZE):
             sha256.update(chunk)

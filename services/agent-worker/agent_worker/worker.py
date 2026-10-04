@@ -17,7 +17,9 @@ import uuid
 from bullmq import Worker, Queue
 from dotenv import load_dotenv
 from agent_worker.db import get_conn
-from agent_worker.storage import probe_dataset, ensure_bucket
+from agent_worker.storage import probe_dataset, ensure_bucket, tabular_delimiter
+from agent_worker.pii.scanner import PiiScanner
+from opentelemetry import trace as otel_trace
 from agent_worker.discovery import importer, kaggle_client
 from agent_worker.discovery import search as discovery_search
 from agent_worker.tracing import tracer, extract_context
@@ -142,8 +144,12 @@ def handle_ingest_dataset(job_data):
             if cur.fetchone() is None:
                 raise RuntimeError(f"dataset {dataset_id} not found (upload row missing)")
 
+        # PII pre-scan rides the same single pass over the file (D-007 scope:
+        # CSV/TSV only). The dataset is not 'ready' until this finishes, so
+        # nothing downstream can see it unscanned.
+        scanner = PiiScanner() if tabular_delimiter(original_filename) else None
         try:
-            metadata = probe_dataset(storage_key, original_filename)
+            metadata = probe_dataset(storage_key, original_filename, observer=scanner)
         except Exception as exc:
             with conn.cursor() as cur:
                 cur.execute(
@@ -153,12 +159,21 @@ def handle_ingest_dataset(job_data):
             conn.commit()
             raise
 
+        findings = scanner.findings() if scanner is not None else []
+        span = otel_trace.get_current_span()
+        span.set_attribute("eda.pii.scanned", scanner is not None)
+        span.set_attribute("eda.pii.flagged_columns", len({f.column_index for f in findings}))
+        if scanner is not None:
+            span.set_attribute("eda.pii.rows_scanned", scanner.rows_scanned)
         with conn.cursor() as cur:
+            # One transaction: dataset goes 'ready' and findings land together,
+            # so there is no moment where it is ready but its scan is missing.
             cur.execute(
                 """
                 UPDATE datasets
                 SET status = 'ready', size_bytes = %s, row_count = %s,
-                    column_count = %s, checksum_sha256 = %s, ingested_at = now()
+                    column_count = %s, checksum_sha256 = %s, ingested_at = now(),
+                    pii_status = %s, pii_scanned_rows = %s, pii_truncated = %s
                 WHERE id = %s
                 """,
                 (
@@ -166,14 +181,27 @@ def handle_ingest_dataset(job_data):
                     metadata["row_count"],
                     metadata["column_count"],
                     metadata["checksum_sha256"],
+                    "scanned" if scanner is not None else "skipped_unsupported",
+                    scanner.rows_scanned if scanner is not None else None,
+                    scanner.truncated if scanner is not None else None,
                     dataset_id,
                 ),
             )
+            for f in findings:
+                cur.execute(
+                    """
+                    INSERT INTO pii_findings (dataset_id, column_index, column_name, detector, pii_type,
+                                              match_count, scanned_values, match_rate, confidence, header_hint)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (dataset_id, f.column_index, f.column_name, f.detector, f.pii_type,
+                     f.match_count, f.scanned_values, f.match_rate, f.confidence, f.header_hint),
+                )
         conn.commit()
     finally:
         conn.close()
 
-    return {"datasetId": dataset_id, **metadata}
+    return {"datasetId": dataset_id, **metadata, "piiFlaggedColumns": len({f.column_index for f in findings})}
 
 
 # --- Phase 1.2: Agent 1 (Dataset Discovery) --------------------------------

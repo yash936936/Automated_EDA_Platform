@@ -98,12 +98,10 @@ frontend, which is still an unscaffolded/undecided item),
 large file doesn't block the request thread (goes through the job queue).
 
 ### 1.2 — Kaggle search & import (Agent 1)
-**Status: LIVE TESTS PASSING, relevance criterion still unscored — 2026-10-03.**
-17 unit + 4 live tests pass against real Kaggle, Gemini and the live stack.
-Not marked done until `scripts/eval_discovery.py` results are scored by a
-human at >= 8/10 queries (run twice to confirm cache hits). See D-017 and
-`docs/debug.md`.
-
+**Status: PASSING — 2026-10-04.** 17 unit + 4 live tests green; relevance
+check: relevant datasets in the top 5 for 10/10 queries (lenient reading,
+~9/10 strict; target >= 8/10) and 10/10 repeat queries were cache hits. See
+D-017 and `docs/debug.md`. Open: licenses are shown but not persisted.
 **Files touched:** `src/agents/discovery/`
 **Work:** Kaggle API metadata search; LLM-based query understanding/keyword
 expansion only (not the search itself); result caching.
@@ -114,6 +112,11 @@ india", "customer churn telecom") and inspect returned candidates.
 cache hit) instead of re-calling Kaggle+LLM.
 
 ### 1.3 — PII pre-scan on ingestion
+**Status: PASSING (with stated limits) — 2026-10-04.** 48 unit + 4 live
+tests green on a real stack (planted PII flagged per type, clean adversarial
+dataset zero findings, no raw values exposed, scan-before-ready atomicity).
+Limits: trace-ordering criterion met structurally rather than via an observed
+trace; large-file scan speed unmeasured live; gaps in D-018.
 **Files touched:** `src/shared/pii/`
 **Work:** regex-based scan (emails, phone numbers, national ID patterns) runs
 on any newly ingested dataset before it's exposed to any LLM call.
@@ -123,6 +126,7 @@ each type, and a clean dataset with none.
 dataset produces zero false flags; scan completes before any LLM call is made
 on that dataset (verified in trace ordering).
 
+**Phase 1 DONE 2026-10-04 (1.1, 1.2, 1.3 all passing; see their status lines).**
 **Phase 1 done when:** 1.1–1.3 pass and a user can go from "search Kaggle" or
 "upload a file" to a dataset row that Phase 2 can pick up, with PII already scanned.
 

@@ -3,6 +3,40 @@
 > Log every session here, newest at top. This is the first thing to read
 > after `context.md` when resuming work.
 
+## [2026-10-04] Phase 1 COMPLETE — Phase 2 (EDA + cleaning) is next
+**What changed:** 1.2's relevance check done (10/10 lenient, ~9/10 strict,
+cache hits 10/10); Phase 1 closed; `docs/readme.md` updated per the
+phase-complete rule.
+**Carried forward into Phase 2 (honest gaps):**
+- Kaggle licenses not persisted on import; many results are NC/Unknown (D-017).
+- Shared server-wide Kaggle token (D-017).
+- `ingest_dataset` runs on the event loop in the eda_clean worker (stall risk
+  for multi-GB files); discovery already uses a thread (D-017).
+- PII: detection only, no masking until 3.2; no card numbers; guard
+  `require_pii_scanned()` must be called by all Phase 2 LLM-context code (D-018).
+- First-search latency 4-10s (sequential searches).
+- SeaweedFS production hardening (D-016); CI doesn't run Phase 1 tests;
+  `architecture.md` file tree drifted from `services/` layout.
+- No real frontend; framework undecided.
+**Next:** Phase 2.1 deterministic profiling (pandas/polars/DuckDB — library
+choice and a performance target are still open items).
+
+## [2026-10-04] Phase 1.3 PASSING — Phase 1 still open on 1.2's relevance score
+**Update:** 52/52 tests green live (see `docs/debug.md`). Phase 1 is done
+when 1.2's human relevance score (`scripts/eval_discovery.py`, >= 8/10) is
+recorded; then update `docs/readme.md` (phase-complete rule) and start Phase 2.
+**Current phase:** Phase 1, sub-phase 1.3. Phase 1.2's human relevance score
+is still outstanding (`eval_discovery.py`, >= 8/10).
+**What changed:** `PiiScanner` rides the ingest pass; `datasets.pii_status` /
+`pii_scanned_rows` / `pii_truncated`; `pii_findings` table (no raw values);
+`GET /api/datasets/:id/pii`; `require_pii_scanned()` guard for Phase 2;
+migration 004. Decisions, scope and known gaps in D-018.
+**Verified:** 48 unit tests; 1.2 unit tests still green; API type-checks.
+**Not verified:** anything on the live stack.
+**To run it:** apply `db/migrations/004_pii.sql`; `npm run build` + restart
+API; restart worker; `pytest tests/test_phase1_3_pii_live.py -v`.
+**Next:** live verification of 1.3; score 1.2; then Phase 2 (profiling).
+
 ## [2026-10-03] Phase 1.2 live tests pass — relevance score pending
 **Update:** all 4 live tests pass against real Kaggle/Gemini (see
 `docs/debug.md`); remaining for 1.2: human-scored `eval_discovery.py`

@@ -4,6 +4,52 @@
 > if a decision is reversed, log a new entry that supersedes it and reference
 > the old ID.
 
+## D-018 — Phase 1.3 PII pre-scan: one-pass scan, heuristic confidence, strict guard — 2026-10-04
+**Decision:**
+1. The scan runs inside the existing ingest pass (`probe_dataset` feeds each
+   parsed row to `PiiScanner`) — no second read of the file. The dataset's
+   `status='ready'`, its `pii_status`, and its `pii_findings` rows are written
+   in ONE transaction, so a dataset is never ready with its scan missing.
+2. D-007 scope, regex only: emails; phones (international `+`, US/NANP
+   formatted, Indian mobile); national IDs: Aadhaar (Verhoeff checksum), PAN
+   (holder-type letter), US SSN (invalid ranges excluded). Aadhaar/PAN/SSN
+   were my choice of "national ID patterns" (D-007 didn't name countries).
+3. Findings are per (column, detector): counts, match rate, confidence,
+   header-hint flag. Raw values are NEVER stored or returned.
+4. Confidence is a documented HEURISTIC (see scanner.py docstring), not a
+   calibrated probability. Flag at >= 0.40 (D-003). Collision-prone detectors
+   (bare 10-digit phones, bare 12-digit Aadhaar) also need a minimum match
+   rate unless the column header hints at the type.
+5. `pii_status` is explicit: `pending` -> `scanned` | `skipped_unsupported`
+   (non-CSV) | `legacy_unscanned` (rows from before 1.3). "Not scanned" is
+   never presented as "clean".
+6. `require_pii_scanned(conn, dataset_id)` guard: only `scanned` passes. Phase
+   2 code must call it before building any LLM context from a dataset.
+7. Rows beyond `PII_MAX_ROWS` (default 500k) are counted but not scanned;
+   `pii_truncated` records it.
+8. Any exception during the pass fails the whole ingestion (status 'failed'
+   with reason) rather than letting a dataset through with an unknown scan.
+**Why:** one pass keeps large-file ingestion cheap; the atomic write and the
+guard make "scan before LLM" structural instead of a convention; explicit
+states avoid the worst failure mode of a scanner, silently reporting "clean".
+**Known gaps (NOT resolved):**
+- Detection only. Nothing is masked: raw data stays unmasked in object
+  storage regardless of findings. Masking/thresholds are Phase 3.2.
+- Names and free-text PII are not detected (D-007, v2). Only emails are
+  searched inside free text; every other detector needs the whole cell to match.
+- Not covered: payment card numbers, other countries' national IDs (UK NINO,
+  etc.), addresses, dates of birth. Card numbers arguably belong in v1 — say
+  if you want them added.
+- PII beyond row `PII_MAX_ROWS` is missed (flagged via `pii_truncated`, not fixed).
+- Confidence numbers are uncalibrated; Phase 8.2 must validate on real data.
+- The "scan before any LLM call, verified in trace ordering" criterion is met
+  structurally (ready only after scan; guard) plus span attributes
+  (`eda.pii.*`) — no code sends dataset-derived data to an LLM yet, so the
+  guard has no callers until Phase 2.
+**Affects:** Phase 1.3, `db/migrations/004_pii.sql`,
+`services/agent-worker/agent_worker/{pii/scanner.py,storage.py,worker.py}`,
+`services/api/src/index.ts` (`GET /api/datasets/:id/pii`), `.env.example`.
+
 ## D-017 — Phase 1.2 Kaggle discovery: queue split, file-level import, shared token — 2026-10-03
 **Decision:**
 1. Agent 1 gets its own BullMQ queue `agent.discovery` (cap via

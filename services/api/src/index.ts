@@ -216,6 +216,32 @@ app.post("/api/datasets/upload", async (req, res) => {
   });
 });
 
+// PII scan results. Findings carry column/detector/confidence only -- never
+// the matched values (see db/migrations/004_pii.sql).
+app.get("/api/datasets/:id/pii", async (req, res) => {
+  const ds = await pool.query(
+    "SELECT id, pii_status, pii_scanned_rows, pii_truncated FROM datasets WHERE id = $1",
+    [req.params.id]
+  );
+  if (!ds.rows[0]) {
+    res.status(404).json({ ok: false, error: "not found" });
+    return;
+  }
+  const f = await pool.query(
+    `SELECT column_index, column_name, detector, pii_type, match_count, scanned_values,
+            match_rate, confidence, header_hint
+     FROM pii_findings WHERE dataset_id = $1 ORDER BY confidence DESC, column_index, detector`,
+    [req.params.id]
+  );
+  res.json({
+    ok: true,
+    piiStatus: ds.rows[0].pii_status,
+    scannedRows: ds.rows[0].pii_scanned_rows,
+    truncated: ds.rows[0].pii_truncated,
+    findings: f.rows,
+  });
+});
+
 app.get("/api/datasets/:id", async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM datasets WHERE id = $1", [req.params.id]);
   if (!rows[0]) {

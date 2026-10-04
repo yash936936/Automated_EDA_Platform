@@ -6,13 +6,17 @@ strict **automation proposes, the user approves** design: nothing touches
 your data without an explicit, logged approval, and every decision is
 reversible and auditable.
 
-> **Status: Phase 0 complete (2026-09-26).** The foundation is real and
-> tested, not aspirational: repo scaffolding, Postgres schema, the BullMQ
-> job queue with pause/resume for human approval, a provider-agnostic LLM
-> interface (Gemini confirmed live), and OpenTelemetry tracing across the
-> API and worker. None of the product features below are built yet — Phase
-> 1 (ingestion) is next. See `docs/status.md` for the detailed trail and
-> `docs/phases.md` for what's next.
+> **Status: Phases 0 and 1 complete (2026-10-04).** Working and tested on a
+> real stack: file upload to S3-compatible object storage with async
+> ingestion (size, checksum, row/column counts); Kaggle search (LLM-assisted
+> query expansion, rank-fused, cached) and per-file import; a deterministic
+> regex PII pre-scan (emails, phones, Aadhaar/PAN/SSN) that records findings
+> without ever storing the values; provider-agnostic LLM interface, BullMQ
+> queues with pause/resume, OpenTelemetry tracing. NOT built yet: profiling,
+> cleaning, approvals, chat, reports (Phase 2+), and PII masking (Phase 3.2).
+> Known gaps: imported Kaggle licences are shown but not yet persisted
+> (see D-017), and there is no real frontend. See `docs/status.md` and
+> `docs/phases.md`.
 
 ## What it does (once built)
 - Upload a file or search/import a dataset from Kaggle.
